@@ -1,0 +1,42 @@
+# ── Secrets & credentials ──────────────────────────────
+.env
+.env.local
+.env.*.local
+credentials.json
+
+# ── Python ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ── App cache (Drive images + embeddings) ──────────────
+backend/cache/
+
+# ── Node / Next.js ─────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+
+# ── OS & editor ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Next.js generated ──────────────────────────────────
+frontend/tsconfig.tsbuildinfo
+frontend/AGENTS.md
+frontend/CLAUDE.md
