@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 
@@ -28,9 +29,19 @@ app.add_middleware(
 )
 
 
+def _write_credentials():
+    """Write credentials.json from base64 env var if file doesn't exist (Railway deployment)."""
+    creds_b64 = os.getenv("GOOGLE_CREDENTIALS_BASE64", "")
+    if creds_b64 and not os.path.exists(settings.google_credentials_path):
+        with open(settings.google_credentials_path, "wb") as f:
+            f.write(base64.b64decode(creds_b64))
+        logger.info("credentials.json written from GOOGLE_CREDENTIALS_BASE64")
+
+
 @app.on_event("startup")
 async def startup():
     logger.info("Initialising services...")
+    _write_credentials()
     state.cnn = CNNExtractor()
     state.cache = CacheService()
     state.drive = DriveService(settings.google_credentials_path)
