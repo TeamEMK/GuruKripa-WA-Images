@@ -72,40 +72,24 @@ export default function App() {
   const { data: catalogData, refresh: refreshCatalog } =
     useAutoRefresh<{ items: CatalogItem[] }>(`${API}/admin/catalog`, 10000);
 
-  const [refreshing, setRefreshing] = useState(false);
-  const [indexing, setIndexing] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const [msg, setMsg] = useState("");
 
-  async function triggerRefresh() {
-    setRefreshing(true);
+  async function triggerRebuildAll() {
+    setRebuilding(true);
     setMsg("");
     try {
-      const res = await fetch(`${API}/admin/refresh`, { method: "POST" });
+      const res = await fetch(`${API}/admin/rebuild-all`, { method: "POST" });
       const body = await res.json();
       setMsg(
-        body.status === "started" ? "Cache rebuild started — takes a few minutes."
-          : body.status === "already_running" ? "Already rebuilding…"
+        body.status === "started" ? "Rebuilding cache + color index — this takes a few minutes."
+          : body.status === "already_running" ? "Already running…"
           : body.status
       );
       refreshStatus();
+      setTimeout(() => refreshCatalog(), 30000);
     } catch { setMsg("Failed to contact backend."); }
-    finally { setRefreshing(false); }
-  }
-
-  async function triggerIndexColors() {
-    setIndexing(true);
-    setMsg("");
-    try {
-      const res = await fetch(`${API}/admin/index-colors`, { method: "POST" });
-      const body = await res.json();
-      setMsg(
-        body.status === "started" ? "Color indexing started — takes ~2 minutes."
-          : body.status === "already_complete" ? "Color index already up to date."
-          : body.status
-      );
-      setTimeout(() => refreshCatalog(), 5000);
-    } catch { setMsg("Failed to contact backend."); }
-    finally { setIndexing(false); }
+    finally { setRebuilding(false); }
   }
 
   const tabs: { id: Tab; label: string }[] = [
@@ -153,11 +137,9 @@ export default function App() {
             status={status}
             statusLoading={statusLoading}
             statusError={statusError}
-            refreshing={refreshing}
-            indexing={indexing}
+            rebuilding={rebuilding}
             msg={msg}
-            onRefresh={triggerRefresh}
-            onIndexColors={triggerIndexColors}
+            onRebuildAll={triggerRebuildAll}
           />
         )}
         {tab === "catalog" && (
@@ -175,17 +157,14 @@ export default function App() {
 
 function DashboardTab({
   status, statusLoading, statusError,
-  refreshing, indexing, msg,
-  onRefresh, onIndexColors,
+  rebuilding, msg, onRebuildAll,
 }: {
   status: CacheStatus | null;
   statusLoading: boolean;
   statusError: string | null;
-  refreshing: boolean;
-  indexing: boolean;
+  rebuilding: boolean;
   msg: string;
-  onRefresh: () => void;
-  onIndexColors: () => void;
+  onRebuildAll: () => void;
 }) {
   return (
     <div className="space-y-6">
@@ -217,26 +196,17 @@ function DashboardTab({
         <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-widest">Actions</h2>
         <div className="flex flex-wrap gap-3">
           <button
-            onClick={onRefresh}
-            disabled={refreshing || !!status?.rebuild_running}
+            onClick={onRebuildAll}
+            disabled={rebuilding || !!status?.rebuild_running}
             className="px-5 py-2.5 rounded-lg bg-green-600 text-white font-medium text-sm
               hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {status?.rebuild_running ? "Rebuilding…" : refreshing ? "Starting…" : "Rebuild cache from Drive"}
-          </button>
-          <button
-            onClick={onIndexColors}
-            disabled={indexing}
-            className="px-5 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm
-              hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {indexing ? "Indexing…" : "Build color index"}
+            {status?.rebuild_running ? "Rebuilding…" : rebuilding ? "Starting…" : "Rebuild & Index from Drive"}
           </button>
         </div>
         {msg && <p className="text-sm text-zinc-400">{msg}</p>}
         <p className="text-xs text-zinc-600">
-          After adding new images to Drive: Rebuild → then Build color index.
-          Run both after clearing cache.
+          Scans Google Drive, downloads images, extracts CNN embeddings, then builds color + folder index.
         </p>
       </div>
     </div>

@@ -34,6 +34,18 @@ async def refresh(background: BackgroundTasks):
     return {"status": "started"}
 
 
+@router.post("/rebuild-all")
+async def rebuild_all(background: BackgroundTasks):
+    """Rebuild Drive cache then build color index in one shot."""
+    global _rebuild_running
+    if _rebuild_running:
+        return {"status": "already_running"}
+    if not state.openai_svc:
+        return {"status": "error", "reason": "OPENAI_API_KEY not set"}
+    background.add_task(_rebuild_and_index)
+    return {"status": "started"}
+
+
 async def _rebuild():
     global _rebuild_running
     _rebuild_running = True
@@ -71,6 +83,13 @@ async def _rebuild():
         logger.error(f"Rebuild failed: {e}")
     finally:
         _rebuild_running = False
+
+
+async def _rebuild_and_index():
+    await _rebuild()
+    logger.info("Starting color index after rebuild...")
+    await _build_color_index()
+    logger.info("Rebuild-all complete")
 
 
 @router.post("/index-colors")
