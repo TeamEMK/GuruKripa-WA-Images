@@ -47,13 +47,14 @@ class CacheService:
             self._rebuild_matrix()
         return self._embedding_matrix
 
-    def upsert(self, drive_id: str, name: str, local_path: str, embedding: np.ndarray):
+    def upsert(self, drive_id: str, name: str, local_path: str, embedding: np.ndarray, folder_path: list[str] | None = None):
         self.images = [d for d in self.images if d["id"] != drive_id]
         self.images.append({
             "id": drive_id,
             "name": name,
             "local_path": local_path,
             "embedding": embedding,
+            "folder_path": folder_path or [],
         })
 
     def finalize(self):

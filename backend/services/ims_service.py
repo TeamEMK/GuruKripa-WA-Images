@@ -66,17 +66,18 @@ class IMSService:
 
     def find_by_color(self, color: str) -> list[dict]:
         """Return cached items matching ALL keywords (color + type) in the query."""
-        # Split "red,earrings" → ["red", "earrings"]
         keywords = [k.strip().lower() for k in color.replace(",", " ").split() if k.strip()]
         if not keywords:
             return []
 
         matches = []
         for item in self.cache.images:
-            tags = [t.lower() for t in self._color_index.get(item["name"], [])]
-            tag_text = " ".join(tags)
-            # Item must match ALL keywords supplied
-            if all(any(kw in tag or tag in kw for tag in tags) or kw in tag_text for kw in keywords):
+            # Color index tags + folder path names (e.g. ["Necklace", "Gold"] → ["necklace", "gold"])
+            color_tags = [t.lower() for t in self._color_index.get(item["name"], [])]
+            folder_tags = [f.lower() for f in item.get("folder_path", [])]
+            all_tags = list(dict.fromkeys(color_tags + folder_tags))
+            tag_text = " ".join(all_tags)
+            if all(any(kw in tag or tag in kw for tag in all_tags) or kw in tag_text for kw in keywords):
                 matches.append(item)
         return matches[:5]
 

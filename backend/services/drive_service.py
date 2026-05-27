@@ -27,10 +27,10 @@ class DriveService:
 
     def list_images(self, folder_id: str) -> list[dict]:
         images: list[dict] = []
-        self._scan(folder_id, images)
+        self._scan(folder_id, images, [])
         return images
 
-    def _scan(self, folder_id: str, images: list[dict]):
+    def _scan(self, folder_id: str, images: list[dict], folder_path: list[str]):
         page_token = None
         while True:
             resp = (
@@ -45,8 +45,9 @@ class DriveService:
             )
             for f in resp.get("files", []):
                 if f["mimeType"] == FOLDER_MIME:
-                    self._scan(f["id"], images)
+                    self._scan(f["id"], images, folder_path + [f["name"]])
                 elif f["mimeType"] in IMAGE_MIMES:
+                    f["folder_path"] = folder_path  # e.g. ["Necklace", "Gold"]
                     images.append(f)
             page_token = resp.get("nextPageToken")
             if not page_token:

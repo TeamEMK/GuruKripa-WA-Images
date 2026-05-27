@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 
 from fastapi import APIRouter, BackgroundTasks
 
@@ -59,7 +60,7 @@ async def _rebuild():
                     None, state.drive.download, img["id"], dest
                 )
                 embedding = await loop.run_in_executor(None, state.cnn.extract, content)
-                state.cache.upsert(img["id"], img["name"], dest, embedding)
+                state.cache.upsert(img["id"], img["name"], dest, embedding, img.get("folder_path", []))
                 logger.info(f"Indexed: {img['name']}")
             except Exception as e:
                 logger.error(f"Failed to process {img['name']}: {e}")
@@ -98,12 +99,32 @@ async def _build_color_index():
             with open(item["local_path"], "rb") as f:
                 img_bytes = f.read()
             colors = await state.openai_svc.extract_colors_from_image(img_bytes)
-            state.ims.update_color_index(item["name"], colors)
-            logger.info(f"Color indexed: {item['name']} → {colors}")
+            # Merge GPT color tags with folder names (free labels from Drive structure)
+            folder_tags = [f.lower() for f in item.get("folder_path", [])]
+            all_tags = list(dict.fromkeys(colors + folder_tags))  # deduplicate, preserve order
+            state.ims.update_color_index(item["name"], all_tags)
+            logger.info(f"Color indexed: {item['name']} → {all_tags}")
             await asyncio.sleep(0.3)  # gentle rate limiting
         except Exception as e:
             logger.error(f"Color index failed for {item['name']}: {e}")
     logger.info("Color index complete")
+
+
+@router.get("/catalog")
+async def catalog():
+    """Return all cached images with folder path and color tags for the dashboard."""
+    items = []
+    for img in state.cache.images:
+        color_tags = state.ims._color_index.get(img["name"], []) if state.ims else []
+        items.append({
+            "id": img["id"],
+            "name": img["name"],
+            "stock": re.sub(r"\.[^.]+$", "", img["name"]),
+            "folder_path": img.get("folder_path", []),
+            "color_tags": color_tags,
+            "image_url": f"/images/{os.path.basename(img['local_path'])}",
+        })
+    return {"items": items}
 
 
 @router.delete("/cache")
