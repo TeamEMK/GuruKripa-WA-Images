@@ -36,11 +36,11 @@ Rules:
 - Styles: traditional, modern, antique, kundan, meenakari, polki, temple, oxidized, plain, bridal, casual
 - Colors: gold, silver, rose-gold, white, black, red, green, blue, pink, yellow, oxidized, multicolor, pearl
 - Do not guess stock numbers - only return STOCK: if you are certain
-- When analyzing an IMAGE query: identify the dominant material first (pearl/moti → include "pearl"; mostly metal → include "gold" or "silver"); this ensures the search returns the same material type
-- "moti" and "pearl" are the same thing - use "pearl"
+- When analyzing an IMAGE query: identify the dominant material first (pearl/moti = include "pearl"; mostly metal = include "gold" or "silver")
+- "moti" and "pearl" are the same - use "pearl"
+"""
 
-
-COLOR_INDEX_PROMPT = """You are an expert Indian jewelry classifier. Analyze ONLY the jewelry item in the image - completely ignore the white/plain background.
+COLOR_INDEX_PROMPT = """You are an expert Indian jewelry classifier. Analyze ONLY the jewelry item in the image - ignore the white/plain background completely.
 
 Extract 4-8 descriptive tags covering these attributes:
 
@@ -50,7 +50,7 @@ TYPE (pick one - be very precise):
   - earrings: any ear jewelry (jhumka, stud, hoop, chandbali, drop, dangler)
   - necklace: neck jewelry (chain, haar, choker, layered, mangalsutra)
   - nath: nose ring worn on nose - NEVER confuse with earrings
-  - tikka / maang-tikka: forehead piece with chain - NEVER confuse with necklace
+  - tikka: forehead piece with chain - NEVER confuse with necklace
   - ring: finger ring
   - bracelet: flexible wrist jewelry
   - bangle: rigid wrist ring
@@ -74,6 +74,7 @@ Critical rules:
   "oxidized,earrings,chandbali,multicolor,statement,antique"
   "gold,tikka,pearl,bridal"
   "gold,earrings,stud,small,modern"
+"""
 
 
 def _pdf_to_jpeg(pdf_bytes: bytes) -> bytes:
@@ -93,9 +94,7 @@ class OpenAIService:
         text: str | None,
         media_type: str = "image",
     ) -> tuple[str, str | None]:
-        """
-        Returns (query_type, value) where query_type is 'stock', 'color', or 'not_found'.
-        """
+        """Returns (query_type, value) where query_type is 'stock', 'color', or 'not_found'."""
         content: list[dict] = []
 
         if text:
@@ -138,7 +137,7 @@ class OpenAIService:
                 )
                 resp.raise_for_status()
                 raw = resp.json()["choices"][0]["message"]["content"].strip()
-                logger.info(f"GPT-4o query analysis: '{raw}'")
+                logger.info(f"GPT-4.1 query analysis: '{raw}'")
 
                 if raw.startswith("STOCK:"):
                     return "stock", raw[6:].strip()
@@ -158,7 +157,7 @@ class OpenAIService:
                     "https://api.openai.com/v1/chat/completions",
                     headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
                     json={
-                        "model": "gpt-4.1-mini",  # cheaper model for bulk indexing
+                        "model": "gpt-4.1-mini",
                         "messages": [
                             {"role": "user", "content": [
                                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
@@ -178,7 +177,6 @@ class OpenAIService:
             logger.error(f"Color extraction failed: {e}")
             return []
 
-    # Keep backwards compat for any existing callers
     async def extract_stock_number(self, image_bytes, text, media_type="image"):
         qtype, value = await self.analyze_query(image_bytes, text, media_type)
         return value if qtype == "stock" else None
