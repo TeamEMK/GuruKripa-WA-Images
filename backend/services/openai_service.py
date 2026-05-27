@@ -28,29 +28,29 @@ Analyze the customer's image and/or message and return ONE of these formats:
    NOT_FOUND
 
 Rules:
-- Return ONLY one of the three formats above — nothing else
+- Return ONLY one of the three formats above - nothing else
 - Stock numbers look like: 9858, 10468, S-1655, S-1387 (numeric or alphanumeric)
 - Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain, nath, tikka, kaan, maang-tikka
 - Subtypes: jhumka, stud, hoop, chandbali, drop, choker, haar, layered
 - Sizes: small, medium, large, mini, heavy, statement
 - Styles: traditional, modern, antique, kundan, meenakari, polki, temple, oxidized, plain, bridal, casual
 - Colors: gold, silver, rose-gold, white, black, red, green, blue, pink, yellow, oxidized, multicolor, pearl
-- Do not guess stock numbers — only return STOCK: if you are certain
+- Do not guess stock numbers - only return STOCK: if you are certain
 - When analyzing an IMAGE query: identify the dominant material first (pearl/moti → include "pearl"; mostly metal → include "gold" or "silver"); this ensures the search returns the same material type
-- "moti" and "pearl" are the same thing — use "pearl"
+- "moti" and "pearl" are the same thing - use "pearl"
 
 
-COLOR_INDEX_PROMPT = """You are an expert Indian jewelry classifier. Analyze ONLY the jewelry item in the image — completely ignore the white/plain background.
+COLOR_INDEX_PROMPT = """You are an expert Indian jewelry classifier. Analyze ONLY the jewelry item in the image - completely ignore the white/plain background.
 
 Extract 4-8 descriptive tags covering these attributes:
 
 METAL (pick one): gold | silver | rose-gold | oxidized | two-tone
 STONE COLOR (if stones present): red | blue | green | white | yellow | pink | purple | pearl | multicolor | emerald | ruby | sapphire
-TYPE (pick one — be very precise):
+TYPE (pick one - be very precise):
   - earrings: any ear jewelry (jhumka, stud, hoop, chandbali, drop, dangler)
   - necklace: neck jewelry (chain, haar, choker, layered, mangalsutra)
-  - nath: nose ring worn on nose — NEVER confuse with earrings
-  - tikka / maang-tikka: forehead piece with chain — NEVER confuse with necklace
+  - nath: nose ring worn on nose - NEVER confuse with earrings
+  - tikka / maang-tikka: forehead piece with chain - NEVER confuse with necklace
   - ring: finger ring
   - bracelet: flexible wrist jewelry
   - bangle: rigid wrist ring
@@ -62,10 +62,10 @@ SIZE: small | medium | large | mini | heavy
 STYLE: traditional | modern | antique | kundan | meenakari | polki | temple | plain | filigree | bridal | casual | oxidized
 
 Critical rules:
-- NEVER tag white/cream photo background as "white" — white means white stones/enamel on the jewelry itself
+- NEVER tag white/cream photo background as "white" - white means white stones/enamel on the jewelry itself
 - A nath (nose ring) is NOT earrings
 - A tikka (forehead) is NOT a necklace
-- Only tag attributes you can clearly see — omit if uncertain
+- Only tag attributes you can clearly see - omit if uncertain
 - Return ONLY lowercase comma-separated tags, no labels or explanations
 - Good examples:
   "gold,earrings,jhumka,red,large,traditional"
@@ -150,7 +150,7 @@ class OpenAIService:
             return "not_found", None
 
     async def extract_colors_from_image(self, image_bytes: bytes) -> list[str]:
-        """Used during cache indexing — extracts color tags from a product image."""
+        """Used during cache indexing - extracts color tags from a product image."""
         b64 = base64.b64encode(image_bytes).decode()
         try:
             async with httpx.AsyncClient(timeout=30) as client:
