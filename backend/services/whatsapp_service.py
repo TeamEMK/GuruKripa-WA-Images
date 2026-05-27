@@ -12,15 +12,17 @@ class WhatsAppService:
         self.api_key = api_key
         self.backend_url = backend_url.rstrip("/")
 
-    async def send_image(self, to: str, filename: str, caption: str = "") -> dict:
+    async def send_image(self, to: str, filename: str, caption: str = "", quoted_msg_id: str | None = None) -> dict:
         media_url = f"{self.backend_url}/images/{filename}"
-        payload = {
+        payload: dict = {
             "to": to,
             "mediaUrl": media_url,
             "mediaType": "image",
             "caption": caption,
             "fileName": filename,
         }
+        if quoted_msg_id:
+            payload["quotedMessageId"] = quoted_msg_id
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 self.api_url,

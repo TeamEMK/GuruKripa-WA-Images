@@ -31,9 +31,9 @@ SEND_DELAY = 2.0
 async def _worker():
     """Consumes the queue sequentially — never processes two requests in parallel."""
     while True:
-        image_url, text, msg_type, sender = await _queue.get()
+        image_url, text, msg_type, sender, msg_id = await _queue.get()
         try:
-            await _process(image_url, text, msg_type, sender)
+            await _process(image_url, text, msg_type, sender, msg_id)
         except Exception as e:
             logger.error(f"Queue worker error: {e}")
         finally:
@@ -90,11 +90,11 @@ async def receive_webhook(request: Request, background: BackgroundTasks):
         return {"status": "skipped", "reason": "no content"}
 
     # Enqueue — webhook returns immediately, processing happens sequentially
-    await _queue.put((image_url, text, msg_type, sender))
+    await _queue.put((image_url, text, msg_type, sender, msg_id))
     return {"status": "queued", "position": _queue.qsize()}
 
 
-async def _process(image_url: str | None, text: str | None, msg_type: str, sender: str):
+async def _process(image_url: str | None, text: str | None, msg_type: str, sender: str, msg_id: str | None = None):
     loop = asyncio.get_event_loop()
 
     # Download media
@@ -129,23 +129,23 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         item = state.ims.find_by_stock_number(stock_number)
 
         if not item:
-            await _reply_text(sender, f"❌ Item *{stock_number}* was not found in our inventory.")
+            await _reply_text(sender, f"❌ Item *{stock_number}* was not found in our inventory.", msg_id)
             return
 
         available, remark = state.ims.check_availability(stock_number)
 
         if remark:
-            await _reply_text(sender, f"❌ Item *{stock_number}* is already reserved.\n_{remark}_")
+            await _reply_text(sender, f"❌ Item *{stock_number}* is already reserved.\n_{remark}_", msg_id)
             return
 
         if not available:
-            await _reply_text(sender, f"❌ Item *{stock_number}* is currently not available.")
+            await _reply_text(sender, f"❌ Item *{stock_number}* is currently not available.", msg_id)
             return
 
         filename = os.path.basename(item["local_path"])
         caption = f"✅ *{item['name'].rsplit('.', 1)[0]}* — exact match"
         await asyncio.sleep(SEND_DELAY)
-        await state.wa.send_image(sender, filename, caption)
+        await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id)
         logger.info(f"Sent exact match {stock_number} to {sender}")
 
     # ── Color search ─────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         matches = state.ims.find_by_color(color)
 
         if not matches:
-            await _reply_text(sender, f"❌ No *{color}* items found in our inventory.")
+            await _reply_text(sender, f"❌ No *{color}* items found in our inventory.", msg_id)
             return
 
         for i, item in enumerate(matches):
@@ -167,7 +167,7 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
             caption = f"{item['name'].rsplit('.', 1)[0]} ({color})"
             await asyncio.sleep(SEND_DELAY)
             try:
-                await state.wa.send_image(sender, filename, caption)
+                await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id)
             except Exception as e:
                 logger.error(f"Failed to send color match {i+1}: {e}")
 
@@ -177,12 +177,15 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
             sender,
             "❌ Could not identify the item. Please send a clearer image with the item "
             "code visible, or mention the stock number or color in your message.",
+            msg_id,
         )
 
 
-async def _reply_text(to: str, message: str):
+async def _reply_text(to: str, message: str, quoted_msg_id: str | None = None):
     url = settings.wa_text_api_url or settings.wa_api_url
-    payload = {"to": to, "text": message}
+    payload: dict = {"to": to, "text": message}
+    if quoted_msg_id:
+        payload["quotedMessageId"] = quoted_msg_id
     try:
         await asyncio.sleep(SEND_DELAY)
         async with httpx.AsyncClient(timeout=20) as client:

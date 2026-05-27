@@ -69,6 +69,9 @@ async def receive_webhook(request: Request, background: BackgroundTasks):
         return {"status": "skipped", "reason": "not a group message"}
     if settings.wa_images_group_id and sender != settings.wa_images_group_id:
         return {"status": "skipped", "reason": "wrong group"}
+    # If this group is also the Guru Kripa group, let Guru Kripa handle it (avoid double response)
+    if settings.guru_kripa_group_id and sender == settings.guru_kripa_group_id:
+        return {"status": "skipped", "reason": "handled by guru kripa"}
 
     background.add_task(_process, image_url, sender)
     return {"status": "processing", "sender": sender}
