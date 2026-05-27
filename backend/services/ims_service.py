@@ -64,22 +64,60 @@ class IMSService:
         self._remarks[key] = {"available": available, "client_remark": client_remark}
         self._save()
 
+    # Material groups — if query contains one of these, ONLY match items in the same group
+    _MATERIAL_GROUPS = [
+        {"pearl", "moti"},
+        {"gold", "metal"},
+        {"silver"},
+        {"oxidized", "antique", "black"},
+        {"rose-gold", "rose gold"},
+        {"kundan"},
+        {"meenakari"},
+        {"polki"},
+    ]
+
     def find_by_color(self, color: str) -> list[dict]:
-        """Return cached items matching ALL keywords (color + type) in the query."""
+        """Return items ranked by keyword match score. Material-exclusive: if query has pearl/moti,
+        only return pearl items; if metal/gold, only return metal items."""
         keywords = [k.strip().lower() for k in color.replace(",", " ").split() if k.strip()]
         if not keywords:
             return []
 
-        matches = []
+        # Detect if the query belongs to a specific material group
+        query_material_group: set | None = None
+        for group in self._MATERIAL_GROUPS:
+            if any(kw in group for kw in keywords):
+                query_material_group = group
+                break
+
+        scored: list[tuple[int, dict]] = []
         for item in self.cache.images:
-            # Color index tags + folder path names (e.g. ["Necklace", "Gold"] → ["necklace", "gold"])
             color_tags = [t.lower() for t in self._color_index.get(item["name"], [])]
             folder_tags = [f.lower() for f in item.get("folder_path", [])]
             all_tags = list(dict.fromkeys(color_tags + folder_tags))
-            tag_text = " ".join(all_tags)
-            if all(any(kw in tag or tag in kw for tag in all_tags) or kw in tag_text for kw in keywords):
-                matches.append(item)
-        return matches[:5]
+
+            # Material exclusivity — skip items that don't share the query's material group
+            if query_material_group:
+                item_has_material = any(
+                    any(tag in kw or kw in tag for tag in all_tags)
+                    for kw in query_material_group
+                )
+                if not item_has_material:
+                    continue
+
+            # Score = number of query keywords matched
+            score = sum(
+                1 for kw in keywords
+                if any(kw in tag or tag in kw for tag in all_tags)
+            )
+            if score == 0:
+                continue
+
+            scored.append((score, item))
+
+        # Sort by score descending (most matched keywords first)
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in scored[:5]]
 
     def update_color_index(self, filename: str, colors: list[str]):
         self._color_index[filename] = colors

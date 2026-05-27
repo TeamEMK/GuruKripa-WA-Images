@@ -35,7 +35,9 @@ Rules:
 - Sizes: small, medium, large, mini, heavy, statement
 - Styles: traditional, modern, antique, kundan, meenakari, polki, temple, oxidized, plain, bridal, casual
 - Colors: gold, silver, rose-gold, white, black, red, green, blue, pink, yellow, oxidized, multicolor, pearl
-- Do not guess stock numbers — only return STOCK: if you are certain"""
+- Do not guess stock numbers — only return STOCK: if you are certain
+- When analyzing an IMAGE query: identify the dominant material first (pearl/moti → include "pearl"; mostly metal → include "gold" or "silver"); this ensures the search returns the same material type
+- "moti" and "pearl" are the same thing — use "pearl"
 
 
 COLOR_INDEX_PROMPT = """You are an expert Indian jewelry classifier. Analyze ONLY the jewelry item in the image — completely ignore the white/plain background.
