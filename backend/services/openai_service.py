@@ -27,19 +27,35 @@ Analyze the customer's image and/or message and return ONE of these formats:
 Rules:
 - Return ONLY one of the three formats above — nothing else
 - Stock numbers look like: 9858, 10468, S-1655, S-1387 (numeric or alphanumeric)
-- Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain
-- Colors: gold, silver, rose gold, white, black, red, green, blue, pink, yellow
+- Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain, nath, tikka, kaan
+- Colors: gold, silver, rose gold, white, black, red, green, blue, pink, yellow, oxidized, multicolor
 - Do not guess stock numbers — only return STOCK: if you are certain"""
 
 
-COLOR_INDEX_PROMPT = """Look at this jewelry product image and identify:
-1. The primary metal color (gold, silver, rose gold, white gold, black/oxidized)
-2. Any gemstone/stone colors (red, blue, green, white/diamond, yellow, pink, etc.)
-3. The jewelry type (earrings, necklace, ring, bracelet, bangle, pendant, set, chain)
+COLOR_INDEX_PROMPT = """You are a jewelry classification expert. Look ONLY at the jewelry item itself (ignore the white/plain background).
 
-Return a comma-separated list of lowercase keywords only.
-Example: "gold,red,necklace" or "silver,blue,earrings" or "rose gold,ring"
-Maximum 4 keywords."""
+Identify and return exactly:
+1. Metal color of the jewelry: gold, silver, rose gold, oxidized/black
+2. Stone/gemstone color if present: red, blue, green, white, yellow, pink, purple, multicolor
+3. Jewelry TYPE — be very precise:
+   - earrings: worn on ears (studs, jhumka, hoops, danglers, chandbali)
+   - necklace: worn around neck (chain, haar, mangalsutra, layered)
+   - nath: nose ring or nose pin (circular ring worn on nose)
+   - tikka: maang tikka (forehead jewelry with chain)
+   - ring: worn on finger
+   - bracelet: worn on wrist
+   - bangle: rigid wrist ornament
+   - pendant: single charm piece (no chain shown)
+   - set: multiple matching pieces shown together
+   - kaan: ear chain connecting ear to hair
+
+Rules:
+- NEVER tag the white/cream photo background as a color
+- A nath is NOT earrings — it is worn on the nose
+- A tikka is NOT a necklace — it hangs on the forehead
+- Return ONLY 2-3 lowercase keywords, comma-separated
+- Examples: "gold,earrings" | "silver,blue,necklace" | "gold,nath" | "gold,tikka" | "gold,red,earrings"
+- If unsure about a stone color, omit it rather than guess"""
 
 
 def _pdf_to_jpeg(pdf_bytes: bytes) -> bytes:
