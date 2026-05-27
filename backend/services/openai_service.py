@@ -12,14 +12,17 @@ Analyze the customer's image and/or message and return ONE of these formats:
    STOCK:<code>
    Examples: STOCK:9858  or  STOCK:S-1655
 
-2. If no stock number but the customer describes by color, type, or both:
+2. If the customer describes what they want (color, type, size, style, shape):
    COLOR:<keywords>
-   Include BOTH the color AND the jewelry type if mentioned, comma-separated.
+   Extract ALL descriptive keywords from the request, comma-separated.
    Examples:
      COLOR:red,earrings
-     COLOR:gold,necklace
-     COLOR:silver,ring
-     COLOR:red         (if no type mentioned)
+     COLOR:gold,necklace,traditional
+     COLOR:silver,jhumka,large
+     COLOR:nath,small
+     COLOR:kundan,earrings
+     COLOR:oxidized,necklace,antique
+     COLOR:gold,tikka,bridal
 
 3. If you cannot determine either:
    NOT_FOUND
@@ -27,35 +30,48 @@ Analyze the customer's image and/or message and return ONE of these formats:
 Rules:
 - Return ONLY one of the three formats above — nothing else
 - Stock numbers look like: 9858, 10468, S-1655, S-1387 (numeric or alphanumeric)
-- Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain, nath, tikka, kaan
-- Colors: gold, silver, rose gold, white, black, red, green, blue, pink, yellow, oxidized, multicolor
+- Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain, nath, tikka, kaan, maang-tikka
+- Subtypes: jhumka, stud, hoop, chandbali, drop, choker, haar, layered
+- Sizes: small, medium, large, mini, heavy, statement
+- Styles: traditional, modern, antique, kundan, meenakari, polki, temple, oxidized, plain, bridal, casual
+- Colors: gold, silver, rose-gold, white, black, red, green, blue, pink, yellow, oxidized, multicolor, pearl
 - Do not guess stock numbers — only return STOCK: if you are certain"""
 
 
-COLOR_INDEX_PROMPT = """You are a jewelry classification expert. Look ONLY at the jewelry item itself (ignore the white/plain background).
+COLOR_INDEX_PROMPT = """You are an expert Indian jewelry classifier. Analyze ONLY the jewelry item in the image — completely ignore the white/plain background.
 
-Identify and return exactly:
-1. Metal color of the jewelry: gold, silver, rose gold, oxidized/black
-2. Stone/gemstone color if present: red, blue, green, white, yellow, pink, purple, multicolor
-3. Jewelry TYPE — be very precise:
-   - earrings: worn on ears (studs, jhumka, hoops, danglers, chandbali)
-   - necklace: worn around neck (chain, haar, mangalsutra, layered)
-   - nath: nose ring or nose pin (circular ring worn on nose)
-   - tikka: maang tikka (forehead jewelry with chain)
-   - ring: worn on finger
-   - bracelet: worn on wrist
-   - bangle: rigid wrist ornament
-   - pendant: single charm piece (no chain shown)
-   - set: multiple matching pieces shown together
-   - kaan: ear chain connecting ear to hair
+Extract 4-8 descriptive tags covering these attributes:
 
-Rules:
-- NEVER tag the white/cream photo background as a color
-- A nath is NOT earrings — it is worn on the nose
-- A tikka is NOT a necklace — it hangs on the forehead
-- Return ONLY 2-3 lowercase keywords, comma-separated
-- Examples: "gold,earrings" | "silver,blue,necklace" | "gold,nath" | "gold,tikka" | "gold,red,earrings"
-- If unsure about a stone color, omit it rather than guess"""
+METAL (pick one): gold | silver | rose-gold | oxidized | two-tone
+STONE COLOR (if stones present): red | blue | green | white | yellow | pink | purple | pearl | multicolor | emerald | ruby | sapphire
+TYPE (pick one — be very precise):
+  - earrings: any ear jewelry (jhumka, stud, hoop, chandbali, drop, dangler)
+  - necklace: neck jewelry (chain, haar, choker, layered, mangalsutra)
+  - nath: nose ring worn on nose — NEVER confuse with earrings
+  - tikka / maang-tikka: forehead piece with chain — NEVER confuse with necklace
+  - ring: finger ring
+  - bracelet: flexible wrist jewelry
+  - bangle: rigid wrist ring
+  - pendant: charm without chain
+  - set: 2+ matching pieces together
+  - kaan: ear-to-hair chain
+SUBTYPE (if identifiable): jhumka | stud | hoop | chandbali | drop | choker | haar | layered | statement | cluster
+SIZE: small | medium | large | mini | heavy
+STYLE: traditional | modern | antique | kundan | meenakari | polki | temple | plain | filigree | bridal | casual | oxidized
+
+Critical rules:
+- NEVER tag white/cream photo background as "white" — white means white stones/enamel on the jewelry itself
+- A nath (nose ring) is NOT earrings
+- A tikka (forehead) is NOT a necklace
+- Only tag attributes you can clearly see — omit if uncertain
+- Return ONLY lowercase comma-separated tags, no labels or explanations
+- Good examples:
+  "gold,earrings,jhumka,red,large,traditional"
+  "silver,necklace,choker,blue,kundan"
+  "gold,nath,small,plain"
+  "oxidized,earrings,chandbali,multicolor,statement,antique"
+  "gold,tikka,pearl,bridal"
+  "gold,earrings,stud,small,modern"
 
 
 def _pdf_to_jpeg(pdf_bytes: bytes) -> bytes:
@@ -143,11 +159,11 @@ class OpenAIService:
                         "model": "gpt-4.1-mini",  # cheaper model for bulk indexing
                         "messages": [
                             {"role": "user", "content": [
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
                                 {"type": "text", "text": COLOR_INDEX_PROMPT},
                             ]},
                         ],
-                        "max_tokens": 30,
+                        "max_tokens": 60,
                         "temperature": 0,
                     },
                 )
