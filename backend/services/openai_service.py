@@ -109,7 +109,7 @@ class OpenAIService:
                     "https://api.openai.com/v1/chat/completions",
                     headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
                     json={
-                        "model": "gpt-4o",
+                        "model": "gpt-4.1",
                         "messages": [
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": content},
@@ -140,7 +140,7 @@ class OpenAIService:
                     "https://api.openai.com/v1/chat/completions",
                     headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
                     json={
-                        "model": "gpt-4o-mini",  # cheaper model for bulk indexing
+                        "model": "gpt-4.1-mini",  # cheaper model for bulk indexing
                         "messages": [
                             {"role": "user", "content": [
                                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}},
