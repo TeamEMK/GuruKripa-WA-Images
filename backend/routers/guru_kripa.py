@@ -102,10 +102,7 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
     if image_url:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    image_url,
-                    headers={"X-API-Key": settings.wa_api_key},
-                )
+                resp = await client.get(image_url, headers={"X-API-Key": settings.wa_api_key})
                 resp.raise_for_status()
                 image_bytes = resp.content
         except Exception as e:
@@ -116,69 +113,136 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         return
 
     if not state.openai_svc:
-        logger.error("OpenAI service not initialised — add OPENAI_API_KEY to .env")
+        logger.error("OpenAI service not initialised")
         return
 
-    # GPT-4o analyses query — returns (type, value)
-    query_type, query_value = await state.openai_svc.analyze_query(image_bytes, text, msg_type)
-    logger.info(f"Query analysis → type={query_type} value={query_value}")
+    # ── IMAGE query: CNN similarity first ────────────────────────────────────
+    if image_bytes:
+        # 1. Try to read stock number from label via GPT
+        query_type, query_value = await state.openai_svc.analyze_query(image_bytes, text, msg_type)
+        logger.info(f"Query analysis -> type={query_type} value={query_value}")
 
-    # ── Stock number search ───────────────────────────────────────────────────
-    if query_type == "stock":
-        stock_number = query_value
-        item = state.ims.find_by_stock_number(stock_number)
-
-        if not item:
-            await _reply_text(sender, f"❌ Item *{stock_number}* was not found in our inventory.", msg_id)
-            return
-
-        available, remark = state.ims.check_availability(stock_number)
-
-        if remark:
-            await _reply_text(sender, f"❌ Item *{stock_number}* is already reserved.\n_{remark}_", msg_id)
-            return
-
-        if not available:
-            await _reply_text(sender, f"❌ Item *{stock_number}* is currently not available.", msg_id)
-            return
-
-        filename = os.path.basename(item["local_path"])
-        caption = f"✅ *{item['name'].rsplit('.', 1)[0]}* — exact match"
-        await asyncio.sleep(SEND_DELAY)
-        await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id)
-        logger.info(f"Sent exact match {stock_number} to {sender}")
-
-    # ── Color search ─────────────────────────────────────────────────────────
-    elif query_type == "color":
-        color = query_value
-        matches = state.ims.find_by_color(color)
-
-        if not matches:
-            await _reply_text(sender, f"❌ No *{color}* items found in our inventory.", msg_id)
-            return
-
-        for i, item in enumerate(matches):
-            available, remark = state.ims.check_availability(
-                item["name"].rsplit(".", 1)[0]
-            )
-            if not available or remark:
-                continue  # skip unavailable items silently
+        if query_type == "stock":
+            # GPT read the label clearly — do exact stock lookup
+            item = state.ims.find_by_stock_number(query_value)
+            if not item:
+                await _reply_text(sender, f"❌ Item *{query_value}* was not found in our inventory.", msg_id)
+                return
+            available, remark = state.ims.check_availability(query_value)
+            if remark:
+                await _reply_text(sender, f"❌ Item *{query_value}* is already reserved.\n_{remark}_", msg_id)
+                return
+            if not available:
+                await _reply_text(sender, f"❌ Item *{query_value}* is currently not available.", msg_id)
+                return
             filename = os.path.basename(item["local_path"])
-            caption = f"{item['name'].rsplit('.', 1)[0]} ({color})"
+            await asyncio.sleep(SEND_DELAY)
+            await state.wa.send_image(sender, filename, f"✅ *{query_value}* — exact match", quoted_msg_id=msg_id)
+            return
+
+        # 2. No stock number read — use CNN to find exact + similar matches
+        emb_matrix = await loop.run_in_executor(None, state.cache.get_embedding_matrix)
+        if emb_matrix.size > 0:
+            try:
+                query_emb = await loop.run_in_executor(None, state.cnn.extract, image_bytes)
+                top_k = await loop.run_in_executor(None, state.cnn.find_top_k, query_emb, emb_matrix, 5)
+            except Exception as e:
+                logger.error(f"CNN extraction failed: {e}")
+                top_k = []
+
+            sent = 0
+            for idx, score in top_k:
+                item = state.cache.images[idx]
+                stock = item["name"].rsplit(".", 1)[0]
+                available, remark = state.ims.check_availability(stock)
+                if not available or remark:
+                    continue
+                filename = os.path.basename(item["local_path"])
+                pct = round(score * 100, 1)
+                tags = state.ims._color_index.get(item["name"], [])
+                tag_str = ", ".join(tags[:4]) if tags else ""
+
+                if score >= 0.90 and sent == 0:
+                    caption = f"✅ *{stock}* — exact match ({pct}%)" + (f"\n{tag_str}" if tag_str else "")
+                else:
+                    caption = f"*{stock}* — {pct}% similar" + (f"\n{tag_str}" if tag_str else "")
+
+                await asyncio.sleep(SEND_DELAY)
+                try:
+                    await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id if sent == 0 else None)
+                    sent += 1
+                except Exception as e:
+                    logger.error(f"Failed to send CNN match: {e}")
+
+            if sent > 0:
+                logger.info(f"Sent {sent} CNN matches to {sender}")
+                return
+
+        # 3. CNN cache empty or no results — fall back to color search
+        if query_type == "color":
+            matches = state.ims.find_by_color(query_value)
+            if not matches:
+                await _reply_text(sender, f"❌ No *{query_value}* items found in our inventory.", msg_id)
+                return
+            for i, item in enumerate(matches):
+                available, remark = state.ims.check_availability(item["name"].rsplit(".", 1)[0])
+                if not available or remark:
+                    continue
+                filename = os.path.basename(item["local_path"])
+                tags = state.ims._color_index.get(item["name"], [])
+                tag_str = ", ".join(tags[:4]) if tags else query_value
+                caption = f"{item['name'].rsplit('.', 1)[0]} ({tag_str})"
+                await asyncio.sleep(SEND_DELAY)
+                try:
+                    await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id if i == 0 else None)
+                except Exception as e:
+                    logger.error(f"Failed to send color match {i+1}: {e}")
+            return
+
+        await _reply_text(sender, "❌ Could not identify the item. Please send a clearer image or type the stock number.", msg_id)
+        return
+
+    # ── TEXT query: GPT analysis ──────────────────────────────────────────────
+    query_type, query_value = await state.openai_svc.analyze_query(None, text, "text")
+    logger.info(f"Text query analysis -> type={query_type} value={query_value}")
+
+    if query_type == "stock":
+        item = state.ims.find_by_stock_number(query_value)
+        if not item:
+            await _reply_text(sender, f"❌ Item *{query_value}* was not found in our inventory.", msg_id)
+            return
+        available, remark = state.ims.check_availability(query_value)
+        if remark:
+            await _reply_text(sender, f"❌ Item *{query_value}* is already reserved.\n_{remark}_", msg_id)
+            return
+        if not available:
+            await _reply_text(sender, f"❌ Item *{query_value}* is currently not available.", msg_id)
+            return
+        filename = os.path.basename(item["local_path"])
+        await asyncio.sleep(SEND_DELAY)
+        await state.wa.send_image(sender, filename, f"✅ *{query_value}* — exact match", quoted_msg_id=msg_id)
+
+    elif query_type == "color":
+        matches = state.ims.find_by_color(query_value)
+        if not matches:
+            await _reply_text(sender, f"❌ No *{query_value}* items found in our inventory.", msg_id)
+            return
+        for i, item in enumerate(matches):
+            available, remark = state.ims.check_availability(item["name"].rsplit(".", 1)[0])
+            if not available or remark:
+                continue
+            filename = os.path.basename(item["local_path"])
+            tags = state.ims._color_index.get(item["name"], [])
+            tag_str = ", ".join(tags[:4]) if tags else query_value
+            caption = f"{item['name'].rsplit('.', 1)[0]} ({tag_str})"
             await asyncio.sleep(SEND_DELAY)
             try:
-                await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id)
+                await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id if i == 0 else None)
             except Exception as e:
                 logger.error(f"Failed to send color match {i+1}: {e}")
 
-    # ── Not found ────────────────────────────────────────────────────────────
     else:
-        await _reply_text(
-            sender,
-            "❌ Could not identify the item. Please send a clearer image with the item "
-            "code visible, or mention the stock number or color in your message.",
-            msg_id,
-        )
+        await _reply_text(sender, "❌ Could not identify the item. Please mention the stock number or describe the item (color, type, style).", msg_id)
 
 
 async def _reply_text(to: str, message: str, quoted_msg_id: str | None = None):
