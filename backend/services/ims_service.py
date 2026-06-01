@@ -76,27 +76,25 @@ class IMSService:
         {"polki"},
     ]
 
-    def find_by_color(self, color: str) -> list[dict]:
-        """Return items ranked by keyword match score. Material-exclusive: if query has pearl/moti,
-        only return pearl items; if metal/gold, only return metal items."""
+    def find_by_color(self, color: str, limit: int = 10) -> list[dict]:
+        """Return items ranked by keyword match score. Folder matches are prioritised.
+        Material-exclusive: pearl query only returns pearl items, gold only gold, etc."""
         keywords = [k.strip().lower() for k in color.replace(",", " ").split() if k.strip()]
         if not keywords:
             return []
 
-        # Detect if the query belongs to a specific material group
         query_material_group: set | None = None
         for group in self._MATERIAL_GROUPS:
             if any(kw in group for kw in keywords):
                 query_material_group = group
                 break
 
-        scored: list[tuple[int, dict]] = []
+        scored: list[tuple[int, bool, dict]] = []
         for item in self.cache.images:
             color_tags = [t.lower() for t in self._color_index.get(item["name"], [])]
             folder_tags = [f.lower() for f in item.get("folder_path", [])]
             all_tags = list(dict.fromkeys(color_tags + folder_tags))
 
-            # Material exclusivity — skip items that don't share the query's material group
             if query_material_group:
                 item_has_material = any(
                     any(tag in kw or kw in tag for tag in all_tags)
@@ -105,19 +103,26 @@ class IMSService:
                 if not item_has_material:
                     continue
 
-            # Score = number of query keywords matched
+            # Folder match — item is in a folder whose name matches a keyword
+            folder_match = any(
+                any(kw in ft or ft in kw for ft in folder_tags)
+                for kw in keywords
+            )
+
             score = sum(
                 1 for kw in keywords
                 if any(kw in tag or tag in kw for tag in all_tags)
             )
-            if score == 0:
+
+            # Include if folder matches even when GPT missed some tags
+            if score == 0 and not folder_match:
                 continue
 
-            scored.append((score, item))
+            scored.append((score, folder_match, item))
 
-        # Sort by score descending (most matched keywords first)
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [item for _, item in scored[:5]]
+        # Folder matches first, then by keyword score descending
+        scored.sort(key=lambda x: (x[1], x[0]), reverse=True)
+        return [item for _, _, item in scored[:limit]]
 
     def update_color_index(self, filename: str, colors: list[str]):
         self._color_index[filename] = colors

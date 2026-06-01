@@ -23,20 +23,26 @@ _seen_ids: deque = deque(maxlen=500)  # keeps last 500 message IDs in memory
 # ── Queue — one request processed at a time to protect the number ────────────
 _queue: asyncio.Queue = asyncio.Queue()
 _worker_started = False
+_processing_task: asyncio.Task | None = None  # currently running _process task
 
 # Delay between sending each WhatsApp message (seconds)
-SEND_DELAY = 2.0
+SEND_DELAY = 5.0
 
 
 async def _worker():
     """Consumes the queue sequentially — never processes two requests in parallel."""
+    global _processing_task
     while True:
-        image_url, text, msg_type, sender, msg_id = await _queue.get()
+        args = await _queue.get()
         try:
-            await _process(image_url, text, msg_type, sender, msg_id)
+            _processing_task = asyncio.ensure_future(_process(*args))
+            await _processing_task
+        except asyncio.CancelledError:
+            logger.info("Processing cancelled by STOP command")
         except Exception as e:
             logger.error(f"Queue worker error: {e}")
         finally:
+            _processing_task = None
             _queue.task_done()
 
 
@@ -88,6 +94,24 @@ async def receive_webhook(request: Request, background: BackgroundTasks):
 
     if not image_url and not text:
         return {"status": "skipped", "reason": "no content"}
+
+    # ── STOP command ─────────────────────────────────────────────────────────
+    if msg_type == "text" and text and text.strip().upper() == "STOP":
+        stopped = False
+        if _processing_task and not _processing_task.done():
+            _processing_task.cancel()
+            stopped = True
+        remaining = _queue.qsize()
+        if stopped and remaining > 0:
+            reply = f"⛔ Search stopped. {remaining} request(s) still in queue and will be processed."
+        elif stopped:
+            reply = "⛔ Search stopped."
+        elif remaining > 0:
+            reply = f"ℹ️ Nothing was processing. {remaining} request(s) in queue."
+        else:
+            reply = "ℹ️ Nothing to stop — no active search or pending requests."
+        background.add_task(_reply_text, sender, reply)
+        return {"status": "stopped"}
 
     # Enqueue — webhook returns immediately, processing happens sequentially
     await _queue.put((image_url, text, msg_type, sender, msg_id))
