@@ -76,12 +76,22 @@ class IMSService:
         {"polki"},
     ]
 
+    # All known jewelry types — GPT type tag overrides folder name
+    _JEWELRY_TYPES = {
+        "earrings", "necklace", "nath", "tikka", "maang-tikka", "ring",
+        "bracelet", "bangle", "pendant", "set", "kaan", "chain", "haar",
+        "choker", "jhumka", "stud", "hoop", "chandbali",
+    }
+
     def find_by_color(self, color: str, limit: int = 10) -> list[dict]:
         """Return items ranked by keyword match score. Folder matches are prioritised.
-        Material-exclusive: pearl query only returns pearl items, gold only gold, etc."""
+        GPT type tag takes priority over folder name — nath never shows for necklace search."""
         keywords = [k.strip().lower() for k in color.replace(",", " ").split() if k.strip()]
         if not keywords:
             return []
+
+        # Which type(s) does the query ask for?
+        query_types = {kw for kw in keywords if kw in self._JEWELRY_TYPES}
 
         query_material_group: set | None = None
         for group in self._MATERIAL_GROUPS:
@@ -95,6 +105,12 @@ class IMSService:
             folder_tags = [f.lower() for f in item.get("folder_path", [])]
             all_tags = list(dict.fromkeys(color_tags + folder_tags))
 
+            # Type exclusion: if query asks for a type and GPT tagged a DIFFERENT type, skip
+            if query_types:
+                gpt_type = next((t for t in color_tags if t in self._JEWELRY_TYPES), None)
+                if gpt_type and gpt_type not in query_types:
+                    continue  # e.g. query=necklace but GPT says nath → skip
+
             if query_material_group:
                 item_has_material = any(
                     any(tag in kw or kw in tag for tag in all_tags)
@@ -103,8 +119,12 @@ class IMSService:
                 if not item_has_material:
                     continue
 
-            # Folder match — item is in a folder whose name matches a keyword
+            # Folder match — only for non-type keywords (style, metal, etc.)
+            non_type_keywords = [kw for kw in keywords if kw not in self._JEWELRY_TYPES]
             folder_match = any(
+                any(kw in ft or ft in kw for ft in folder_tags)
+                for kw in non_type_keywords
+            ) if non_type_keywords else any(
                 any(kw in ft or ft in kw for ft in folder_tags)
                 for kw in keywords
             )
@@ -114,7 +134,6 @@ class IMSService:
                 if any(kw in tag or tag in kw for tag in all_tags)
             )
 
-            # Include if folder matches even when GPT missed some tags
             if score == 0 and not folder_match:
                 continue
 

@@ -31,8 +31,9 @@ Rules:
 - Return ONLY one of the three formats above - nothing else
 - Stock numbers look like: 9858, 10468, S-1655, S-1387 (numeric or alphanumeric)
 - Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain, nath, tikka, kaan, maang-tikka
-- Subtypes: jhumka, stud, hoop, chandbali, drop, choker, haar, layered
+- Subtypes: jhumka, stud, hoop, chandbali, drop, choker, haar, layered, long, short
 - Sizes: small, medium, large, mini, heavy, statement
+- Necklace lengths: short, medium-length, long, opera, layered
 - Styles: traditional, modern, antique, kundan, meenakari, polki, temple, oxidized, plain, bridal, casual
 - Colors: gold, silver, rose-gold, white, black, red, green, blue, pink, yellow, oxidized, multicolor, pearl
 - Do not guess stock numbers - only return STOCK: if you are certain
@@ -59,7 +60,13 @@ TYPE (pick one - be very precise):
   - kaan: ear-to-hair chain
 SUBTYPE (if identifiable): jhumka | stud | hoop | chandbali | drop | choker | haar | layered | statement | cluster
 SIZE: small | medium | large | mini | heavy
-STYLE: traditional | modern | antique | kundan | meenakari | polki | temple | plain | filigree | bridal | casual | oxidized
+STYLE: traditional | modern | antique | kundan | meenakari | polki | temple | plain | filigree | bridal | casual | oxidized | jadau | nakshi | kashu | lakshmi | temple
+LENGTH (necklaces only - judge by how long the chain appears):
+  - short: sits at collarbone/neck, up to 18 inches
+  - medium-length: sits on chest, 18-24 inches
+  - long: goes below chest, 24-32 inches (e.g. long haar)
+  - opera: very long, hangs to stomach or below, 30+ inches
+  - layered: multiple chains of different lengths together
 
 Critical rules:
 - NEVER tag white/cream photo background as "white" - white means white stones/enamel on the jewelry itself
