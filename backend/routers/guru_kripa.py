@@ -202,11 +202,11 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
                 logger.info(f"Sent {sent} CNN matches to {sender}")
                 return
 
-        # 3. CNN cache empty or no results — fall back to color search
+        # 3. CNN cache empty or no results — fall back to semantic search
         if query_type == "color":
-            matches = state.ims.find_by_color(query_value)
+            matches = await _semantic_search(query_value, query_value)
             if not matches:
-                await _reply_text(sender, f"❌ No *{query_value}* items found in our inventory.", msg_id)
+                await _reply_text(sender, f"❌ No matching items found.", msg_id)
                 return
             for i, item in enumerate(matches):
                 available, remark = state.ims.check_availability(item["name"].rsplit(".", 1)[0])
@@ -220,7 +220,7 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
                 try:
                     await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id if i == 0 else None)
                 except Exception as e:
-                    logger.error(f"Failed to send color match {i+1}: {e}")
+                    logger.error(f"Failed to send match {i+1}: {e}")
             return
 
         await _reply_text(sender, "❌ Could not identify the item. Please send a clearer image or type the stock number.", msg_id)
@@ -247,9 +247,9 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         await state.wa.send_image(sender, filename, f"✅ *{query_value}* — exact match", quoted_msg_id=msg_id)
 
     elif query_type == "color":
-        matches = state.ims.find_by_color(query_value)
+        matches = await _semantic_search(text or query_value, query_value)
         if not matches:
-            await _reply_text(sender, f"❌ No *{query_value}* items found in our inventory.", msg_id)
+            await _reply_text(sender, f"❌ No matching items found for *{query_value}*.", msg_id)
             return
         for i, item in enumerate(matches):
             available, remark = state.ims.check_availability(item["name"].rsplit(".", 1)[0])
@@ -263,10 +263,24 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
             try:
                 await state.wa.send_image(sender, filename, caption, quoted_msg_id=msg_id if i == 0 else None)
             except Exception as e:
-                logger.error(f"Failed to send color match {i+1}: {e}")
+                logger.error(f"Failed to send match {i+1}: {e}")
 
     else:
-        await _reply_text(sender, "❌ Could not identify the item. Please mention the stock number or describe the item (color, type, style).", msg_id)
+        await _reply_text(sender, "❌ Could not identify the item. Please mention the stock number or describe the item.", msg_id)
+
+
+async def _semantic_search(raw_query: str, keyword_fallback: str) -> list[dict]:
+    """Try semantic embedding search first, fall back to keyword search."""
+    if state.openai_svc and state.ims._text_embeddings:
+        embedding = await state.openai_svc.embed_text(raw_query)
+        if embedding:
+            results = state.ims.find_by_semantic(embedding, limit=5)
+            if results:
+                logger.info(f"Semantic search for '{raw_query}' returned {len(results)} results")
+                return results
+    # Fallback to keyword search
+    logger.info(f"Falling back to keyword search for '{keyword_fallback}'")
+    return state.ims.find_by_color(keyword_fallback, limit=5)
 
 
 async def _reply_text(to: str, message: str, quoted_msg_id: str | None = None):

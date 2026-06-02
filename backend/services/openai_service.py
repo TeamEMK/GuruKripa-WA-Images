@@ -184,6 +184,21 @@ class OpenAIService:
             logger.error(f"Color extraction failed: {e}")
             return []
 
+    async def embed_text(self, text: str) -> list[float]:
+        """Generate a semantic embedding for text using text-embedding-3-small."""
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+                    json={"model": "text-embedding-3-small", "input": text},
+                )
+                resp.raise_for_status()
+                return resp.json()["data"][0]["embedding"]
+        except Exception as e:
+            logger.error(f"embed_text failed: {e}")
+            return []
+
     async def extract_stock_number(self, image_bytes, text, media_type="image"):
         qtype, value = await self.analyze_query(image_bytes, text, media_type)
         return value if qtype == "stock" else None

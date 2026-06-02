@@ -3,17 +3,21 @@ import logging
 import os
 import re
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 REMARKS_FILE = "cache/ims_remarks.json"
 COLOR_INDEX_FILE = "cache/color_index.json"
+TEXT_EMBEDDINGS_FILE = "cache/text_embeddings.json"
 
 
 class IMSService:
     def __init__(self, cache_service):
         self.cache = cache_service
         self._remarks: dict = {}
-        self._color_index: dict = {}  # filename → ["gold", "white diamond"]
+        self._color_index: dict = {}
+        self._text_embeddings: dict = {}  # filename → embedding vector
         self._load()
 
     def _load(self):
@@ -25,6 +29,10 @@ class IMSService:
             with open(COLOR_INDEX_FILE) as f:
                 self._color_index = json.load(f)
             logger.info(f"Loaded color index: {len(self._color_index)} entries")
+        if os.path.exists(TEXT_EMBEDDINGS_FILE):
+            with open(TEXT_EMBEDDINGS_FILE) as f:
+                self._text_embeddings = json.load(f)
+            logger.info(f"Loaded text embeddings: {len(self._text_embeddings)} entries")
 
     def _save(self):
         os.makedirs("cache", exist_ok=True)
@@ -83,7 +91,7 @@ class IMSService:
         "choker", "jhumka", "stud", "hoop", "chandbali",
     }
 
-    def find_by_color(self, color: str, limit: int = 10) -> list[dict]:
+    def find_by_color(self, color: str, limit: int = 5) -> list[dict]:
         """Return items ranked by keyword match score. Folder matches are prioritised.
         GPT type tag takes priority over folder name — nath never shows for necklace search."""
         keywords = [k.strip().lower() for k in color.replace(",", " ").split() if k.strip()]
@@ -146,6 +154,30 @@ class IMSService:
     def update_color_index(self, filename: str, colors: list[str]):
         self._color_index[filename] = colors
         self._save_colors()
+
+    def update_text_embedding(self, filename: str, embedding: list[float]):
+        self._text_embeddings[filename] = embedding
+        os.makedirs("cache", exist_ok=True)
+        with open(TEXT_EMBEDDINGS_FILE, "w") as f:
+            json.dump(self._text_embeddings, f)
+
+    def find_by_semantic(self, query_embedding: list[float], limit: int = 5) -> list[dict]:
+        """Find best matching items using semantic similarity on tag embeddings."""
+        if not self._text_embeddings or not query_embedding:
+            return []
+        q = np.array(query_embedding, dtype=np.float32)
+        q = q / (np.linalg.norm(q) + 1e-8)
+        scored = []
+        for item in self.cache.images:
+            emb = self._text_embeddings.get(item["name"])
+            if not emb:
+                continue
+            v = np.array(emb, dtype=np.float32)
+            v = v / (np.linalg.norm(v) + 1e-8)
+            score = float(np.dot(q, v))
+            scored.append((score, item))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in scored[:limit]]
 
     def all_remarks(self) -> dict:
         return self._remarks

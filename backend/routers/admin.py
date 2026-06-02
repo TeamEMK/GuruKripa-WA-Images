@@ -120,8 +120,16 @@ async def _build_color_index():
             colors = await state.openai_svc.extract_colors_from_image(img_bytes)
             # Merge GPT color tags with folder names (free labels from Drive structure)
             folder_tags = [f.lower() for f in item.get("folder_path", [])]
-            all_tags = list(dict.fromkeys(colors + folder_tags))  # deduplicate, preserve order
+            all_tags = list(dict.fromkeys(colors + folder_tags))
             state.ims.update_color_index(item["name"], all_tags)
+
+            # Generate semantic text embedding from tags + stock name for smart search
+            stock = re.sub(r"\.[^.]+$", "", item["name"])
+            tag_description = " ".join(all_tags) + f" {stock}"
+            embedding = await state.openai_svc.embed_text(tag_description)
+            if embedding:
+                state.ims.update_text_embedding(item["name"], embedding)
+
             logger.info(f"Color indexed: {item['name']} → {all_tags}")
             await asyncio.sleep(0.3)  # gentle rate limiting
         except Exception as e:
