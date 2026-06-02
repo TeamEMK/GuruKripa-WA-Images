@@ -328,7 +328,7 @@ function ImageCard({ item }: { item: CatalogItem }) {
             {item.folder_path.map((f, i) => (
               <span key={i} className="flex items-center gap-1">
                 {i > 0 && <span className="text-zinc-700 text-xs">/</span>}
-                <span className="text-xs text-zinc-500 truncate max-w-[70px]" title={f}>{f}</span>
+                <span className="text-xs text-zinc-500">{f}</span>
               </span>
             ))}
           </div>
@@ -337,7 +337,7 @@ function ImageCard({ item }: { item: CatalogItem }) {
         {/* Color/type tags */}
         {item.color_tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {item.color_tags.slice(0, 4).map((tag, i) => (
+            {item.color_tags.map((tag, i) => (
               <span key={i} className={`px-2 py-0.5 rounded-full text-xs font-medium ${tagColor(tag)}`}>
                 {tag}
               </span>
