@@ -1,6 +1,6 @@
-import asyncio
 import hashlib
 import hmac
+import json
 import logging
 
 import httpx
@@ -8,6 +8,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 import state
 from config import settings
+from core.security import media_host_allowed
+from services.openai_service import profile_to_embed_text
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -45,23 +47,22 @@ def _is_group(jid: str) -> bool:
 async def receive_webhook(request: Request, background: BackgroundTasks):
     body = await request.body()
 
-    # Verify the request is genuinely from aumpfy
-    if settings.webhook_secret:
-        sig = request.headers.get("x-waumfy-signature", "")
-        sig = sig.removeprefix("sha256=")  # handle both plain hex and "sha256=..." formats
-        expected = hmac.new(
-            settings.webhook_secret.encode(), body, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            logger.warning(f"Signature mismatch — got: {sig}")
-            raise HTTPException(status_code=401, detail="Invalid signature")
+    # Verify the request is genuinely from aumpfy. Fail closed (SEC-01).
+    if not settings.webhook_secret:
+        logger.error("webhook_secret not set — rejecting webhook")
+        raise HTTPException(status_code=503, detail="webhook not configured")
+    sig = request.headers.get("x-waumfy-signature", "").removeprefix("sha256=")
+    expected = hmac.new(settings.webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        logger.warning("Signature mismatch")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
-    import json
     payload = json.loads(body)
-    logger.info(f"Webhook payload: {payload}")
 
     image_url = _extract_image_url(payload)
     sender = _extract_sender(payload)
+    # Log only non-sensitive metadata, never the full payload (SEC-04)
+    logger.info(f"Webhook — sender={sender} has_image={bool(image_url)}")
 
     if not image_url:
         return {"status": "skipped", "reason": "no image found in payload"}
@@ -78,9 +79,9 @@ async def receive_webhook(request: Request, background: BackgroundTasks):
 
 
 async def _process(image_url: str, sender: str):
-    loop = asyncio.get_event_loop()
-
-    # Download the incoming image (aumpfy media URLs need the API key)
+    # Download the incoming image (SSRF guard: only from trusted media hosts)
+    if not media_host_allowed(image_url):
+        return
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
@@ -93,27 +94,24 @@ async def _process(image_url: str, sender: str):
         logger.error(f"Failed to download image: {e}")
         return
 
-    # CNN extract (CPU-bound → thread pool)
-    try:
-        query_emb = await loop.run_in_executor(None, state.cnn.extract, image_bytes)
-    except Exception as e:
-        logger.error(f"Feature extraction failed: {e}")
+    if not state.openai_svc:
+        logger.error("OpenAI service not initialised")
         return
 
-    # Get embedding matrix
-    emb_matrix = await loop.run_in_executor(None, state.cache.get_embedding_matrix)
-    if emb_matrix.size == 0:
-        logger.warning("Cache is empty — run POST /admin/refresh first")
+    # Vision profile → embed → semantic search (replaces the old CNN vector path)
+    profile = await state.openai_svc.analyze_image_profile(image_bytes)
+    if not profile:
+        logger.warning("Could not profile incoming image")
         return
 
-    # Find top 5 similar
-    top_k = await loop.run_in_executor(None, state.cnn.find_top_k, query_emb, emb_matrix, 5)
-    if not top_k:
+    query_vec = await state.openai_svc.embed_text(profile_to_embed_text(profile))
+    results = state.cache.find_semantic(query_vec, k=5, min_score=settings.min_match_score)
+    if not results:
+        logger.warning("No matches — cache may be empty, run POST /admin/refresh first")
         return
 
-    indices = [i for i, _ in top_k]
-    scores = [s for _, s in top_k]
-    matches = state.cache.get_by_indices(indices)
+    matches = [item for item, _ in results]
+    scores = [score for _, score in results]
 
     # Send back to the same group
     await state.wa.send_top_matches(sender, matches, scores)
