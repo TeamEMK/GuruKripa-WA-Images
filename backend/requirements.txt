@@ -2,15 +2,9 @@ fastapi==0.115.5
 uvicorn[standard]==0.32.1
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
-# CPU-only PyTorch — much smaller build on Railway (~200MB vs 2GB)
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1+cpu
-torchvision==0.20.1+cpu
-Pillow==11.0.0
 google-api-python-client==2.154.0
 google-auth==2.36.0
 httpx==0.27.2
 python-multipart==0.0.17
 numpy==2.1.3
-openai==1.57.0
 PyMuPDF==1.24.13

@@ -1,0 +1,15 @@
+# Railway deployment — Railpack builder (Nixpacks + Dockerfile removed).
+#
+# REQUIRED dashboard setting: set the Railway service "Root Directory" to
+# `backend` so Railpack auto-detects requirements.txt + main.py. The build then
+# lands at /app (matching the old Dockerfile layout), so the persistent volume
+# stays mounted at /app/cache with no change.
+
+[build]
+builder = "railpack"
+
+[deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"

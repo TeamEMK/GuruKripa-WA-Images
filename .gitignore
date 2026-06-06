@@ -21,6 +21,8 @@ build/
 
 # ── App cache (Drive images + embeddings) ──────────────
 backend/cache/
+cache/
+*.pkl
 
 # ── Node / Next.js ─────────────────────────────────────
 node_modules/

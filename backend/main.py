@@ -8,7 +8,6 @@ from fastapi.staticfiles import StaticFiles
 
 import state
 from config import settings
-from models.cnn_extractor import CNNExtractor
 from routers import admin, guru_kripa, webhook
 from services.cache_service import CacheService
 from services.drive_service import DriveService
@@ -42,16 +41,19 @@ def _write_credentials():
 async def startup():
     logger.info("Initialising services...")
     _write_credentials()
-    state.cnn = CNNExtractor()
     state.cache = CacheService()
     state.drive = DriveService(settings.google_credentials_path)
     state.wa = WhatsAppService(settings.wa_api_url, settings.wa_api_key, settings.backend_url)
     state.ims = IMSService(state.cache)
     if settings.openai_api_key:
-        state.openai_svc = OpenAIService(settings.openai_api_key)
-        logger.info("OpenAI service ready")
+        state.openai_svc = OpenAIService(
+            settings.openai_api_key,
+            embedding_model=settings.embedding_model,
+            vision_model=settings.vision_model,
+        )
+        logger.info(f"OpenAI service ready (vision={settings.vision_model}, embed={settings.embedding_model})")
     else:
-        logger.warning("OPENAI_API_KEY not set — Guru Kripa module disabled")
+        logger.warning("OPENAI_API_KEY not set — image/text search disabled")
     logger.info("All services ready")
 
 
