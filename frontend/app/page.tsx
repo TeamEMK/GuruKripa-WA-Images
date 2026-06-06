@@ -64,21 +64,6 @@ function useAutoRefresh<T>(url: string, intervalMs = 5000) {
   return { data, loading, error, refresh: fetch_ };
 }
 
-function useAdminKey() {
-  const [key, setKey] = useState("");
-  useEffect(() => {
-    // Prefer a saved key; otherwise fall back to the build-time NEXT_PUBLIC_ADMIN_KEY.
-    const fallback = process.env.NEXT_PUBLIC_ADMIN_KEY ?? "";
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration
-    setKey(localStorage.getItem("adminKey") || fallback);
-  }, []);
-  const save = (k: string) => {
-    setKey(k);
-    localStorage.setItem("adminKey", k);
-  };
-  return { key, save };
-}
-
 // ── Main ───────────────────────────────────────────────────────────────────
 
 type Tab = "dashboard" | "catalog" | "history";
@@ -86,7 +71,6 @@ type Banner = { kind: "ok" | "err" | "info"; text: string } | null;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
-  const { key: adminKey, save: saveKey } = useAdminKey();
 
   const status = useAutoRefresh<CacheStatus>(`${API}/admin/status`, 4000);
   const matchesData = useAutoRefresh<{ matches: MatchEntry[] }>(`${API}/admin/matches?limit=50`, 5000);
@@ -99,20 +83,17 @@ export default function App() {
     status.error ? "offline" : status.data ? "online" : "connecting";
 
   async function runIndex(path: string, label: string) {
-    if (!adminKey) {
-      setBanner({ kind: "err", text: "Enter your Admin Key below first." });
-      return;
-    }
     setBusy(true);
     setBanner({ kind: "info", text: `${label}…` });
     try {
-      const res = await fetch(`${API}${path}`, {
+      // /api/admin/* is a server route that attaches the admin key from the
+      // server env (ADMIN_API_KEY) — the browser never handles the key.
+      const res = await fetch(`/api/admin/${path}`, {
         method: "POST",
-        headers: { "X-Admin-Key": adminKey },
         signal: AbortSignal.timeout(30000),
       });
       if (res.status === 401) {
-        setBanner({ kind: "err", text: "Unauthorized — that Admin Key is wrong." });
+        setBanner({ kind: "err", text: "Unauthorized — the server's ADMIN_API_KEY doesn't match the backend." });
         return;
       }
       const body = await res.json();
@@ -185,10 +166,9 @@ export default function App() {
             conn={conn}
             busy={busy}
             banner={banner}
-            adminKey={adminKey}
-            onSaveKey={saveKey}
-            onIndexAll={() => runIndex("/admin/refresh", "Full index")}
-            onIndexTest={() => runIndex("/admin/reindex?limit=30", "Test batch (30)")}
+            onIndexAll={() => runIndex("refresh", "Full index")}
+            onIndexTest={() => runIndex("reindex?limit=30", "Test batch (30)")}
+            onReTag={() => runIndex("reindex?force=true&limit=10000", "Re-tagging all")}
           />
         )}
         {tab === "catalog" && <CatalogTab items={catalogData.data?.items ?? []} />}
@@ -220,16 +200,15 @@ function ConnPill({ conn }: { conn: "online" | "connecting" | "offline" }) {
 // ── Dashboard Tab ──────────────────────────────────────────────────────────
 
 function DashboardTab({
-  status, conn, busy, banner, adminKey, onSaveKey, onIndexAll, onIndexTest,
+  status, conn, busy, banner, onIndexAll, onIndexTest, onReTag,
 }: {
   status: CacheStatus | null;
   conn: string;
   busy: boolean;
   banner: Banner;
-  adminKey: string;
-  onSaveKey: (k: string) => void;
   onIndexAll: () => void;
   onIndexTest: () => void;
+  onReTag: () => void;
 }) {
   const total = status?.total_images ?? 0;
   const profiled = status?.profiled ?? 0;
@@ -290,24 +269,6 @@ function DashboardTab({
       <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 to-transparent p-6 space-y-5">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Index from Google Drive</h2>
 
-        {/* Admin key */}
-        <div className="space-y-1.5">
-          <label className="text-xs text-slate-400">Admin Key</label>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={adminKey}
-              placeholder="paste your ADMIN_API_KEY"
-              onChange={(e) => onSaveKey(e.target.value.trim())}
-              className="flex-1 rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none focus:border-indigo-400/60"
-            />
-            <span className={`grid place-items-center rounded-lg px-3 text-xs ${adminKey ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-800 text-slate-500"}`}>
-              {adminKey ? "saved" : "empty"}
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-600">Stored only in this browser. Needed to start indexing.</p>
-        </div>
-
         <div className="flex flex-wrap gap-3">
           <button
             onClick={onIndexAll}
@@ -323,6 +284,13 @@ function DashboardTab({
           >
             Test batch (30)
           </button>
+          <button
+            onClick={onReTag}
+            disabled={busy || running}
+            className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-5 py-2.5 text-sm font-semibold text-amber-200 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ♻️ Re-tag all
+          </button>
         </div>
 
         {banner && (
@@ -336,8 +304,10 @@ function DashboardTab({
         )}
 
         <p className="text-[11px] text-slate-600">
-          Scans Drive (incl. subfolders), and builds an OpenAI Vision profile + embedding for each image.
+          Scans Drive (incl. subfolders) and builds an OpenAI Vision profile + embedding for each image.
           “Test batch” profiles only 30 so you can eyeball quality in the Catalog tab first.
+          “Re-tag all” re-profiles every image from scratch — use it after a tagging change (e.g. to pick up
+          long-vs-large fixes). New Drive images are also picked up automatically every ~10 min.
         </p>
       </div>
     </div>

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # eyeballing results — ~0.2 trims clearly-irrelevant top-5 padding.
     min_match_score: float = 0.0
 
+    # ── Auto-index ───────────────────────────────────────────
+    # Periodically scan Drive and index any NEW images (incremental; already-
+    # profiled images are skipped, so it only costs OpenAI for new files).
+    # 0 = disabled. Runs on the single instance.
+    auto_index_interval_minutes: int = 10
+
     # ── Guru Kripa (WhatsApp group) ──────────────────────────
     guru_kripa_group_id: str = ""
     guru_kripa_webhook_secret: str = ""

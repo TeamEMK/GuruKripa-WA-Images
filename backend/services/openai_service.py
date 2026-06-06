@@ -59,9 +59,9 @@ Return a SINGLE JSON object (no markdown, no commentary) with exactly these keys
   "stone_color": string[],         // visible stone/enamel colors: red, blue, green, white, yellow, pink, purple, pearl, multicolor, emerald, ruby, sapphire
   "colors": string[],              // dominant overall colors of the piece (metal + stones combined)
   "subtype": string | null,        // jhumka, stud, hoop, chandbali, drop, choker, haar, layered, statement, cluster
-  "size": string | null,           // small, medium, large, mini, heavy
+  "size": string | null,           // OVERALL SCALE of the piece: small, medium, large, mini, heavy
   "style": string[],               // traditional, modern, antique, kundan, meenakari, polki, temple, plain, filigree, bridal, casual, oxidized, jadau, nakshi
-  "length": string | null,         // necklaces only: short, medium-length, long, opera, layered
+  "length": string | null,         // HOW FAR IT HANGS: short, medium-length, long, opera, layered
   "labels": string[],              // 3-6 short searchable labels, e.g. ["gold jhumka", "red stone earrings"]
   "tags": string[],                // 2-5 occasion/mood tags, e.g. ["festive", "wedding", "luxury"]
   "keywords": string[]             // 3-6 phrases a customer might type to find this, e.g. ["gold kundan jhumka", "red bridal earrings"]
@@ -72,6 +72,26 @@ Critical rules:
 - NEVER report the white/cream photo background as a color. "white" means white stones/enamel ON the jewelry.
 - Only fill attributes you can clearly see; use null or [] when uncertain.
 - "moti" = "pearl". Use lowercase everywhere.
+
+SIZE vs LENGTH — these are DIFFERENT and customers search by BOTH, do not confuse them:
+- "size" = how big/heavy the piece looks overall (small / medium / large / mini / heavy).
+- "length" = how far it hangs down (short / medium-length / long / opera / layered).
+- ALWAYS set "length" for ANY hanging or elongated piece. This INCLUDES earrings —
+  jhumka, chandbali, drop and dangling earrings all have a length. Also: necklace, haar,
+  chain, choker, tikka, maang-tikka, kaan, and long pendants.
+- EARRINGS length rule (judge by how far the earring drops below the earlobe):
+    * stud / small button sitting on the lobe                → length "short"
+    * normal jhumka / chandbali dropping a little            → length "medium-length"
+    * long dangling earring, chain/drop hanging well down,
+      multi-tier / pearl-string / shoulder-duster earrings   → length "long"
+  An earring can be physically narrow/light but still LONG — set length "long" by how far
+  it HANGS, never by how heavy it looks. Do NOT call a long earring "short" just because
+  it is thin.
+- A necklace example: a long haar or a tikka with a long chain → "long".
+  A short choker sitting at the neck → "short".
+- A piece can be BOTH (e.g. a big long haar → size "large" AND length "long"). Include both.
+- When a customer types "long" they mean LENGTH — so a long earring or long haar must carry
+  length "long", NOT just size "large". "large" ≠ "long". Never substitute one for the other.
 """
 
 
@@ -97,6 +117,44 @@ def profile_to_embed_text(profile: dict) -> str:
         if isinstance(vals, list):
             parts.extend(str(v) for v in vals if v)
     return " ".join(parts).strip()
+
+
+def profile_caption(profile: dict) -> str:
+    """Build a short human-readable descriptor of a piece for a WhatsApp caption.
+
+    Reads like a salesperson would describe it, e.g. "Gold long chandbali earrings"
+    or "Pearl traditional necklace". Order: metal → length → subtype/style → category.
+    Falls back gracefully when attributes are missing."""
+    if not profile:
+        return ""
+
+    metal = (profile.get("metal") or "").strip()
+    category = (profile.get("category") or "").strip()
+    subtype = (profile.get("subtype") or "").strip()
+    # length describes how far it hangs; only show meaningful values (skip "medium-length")
+    length = (profile.get("length") or "").strip()
+    length = length if length in {"long", "short", "opera", "layered"} else ""
+    # if no length, fall back to overall size so the customer still gets a scale hint
+    size = (profile.get("size") or "").strip()
+
+    parts: list[str] = []
+    if metal:
+        parts.append(metal)
+    if length:
+        parts.append(length)
+    elif size and size not in {"medium"}:
+        parts.append(size)
+    if subtype:
+        parts.append(subtype)
+    if category:
+        parts.append(category)
+
+    # de-dupe while preserving order (e.g. subtype == category)
+    parts = list(dict.fromkeys(p for p in parts if p))
+    if not parts:
+        return ""
+    phrase = " ".join(parts)
+    return phrase[:1].upper() + phrase[1:]
 
 
 def profile_tags(profile: dict) -> list[str]:

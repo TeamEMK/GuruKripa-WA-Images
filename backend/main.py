@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import os
@@ -49,6 +50,8 @@ async def lifespan(app: FastAPI):
     if not settings.admin_api_key:
         logger.warning("ADMIN_API_KEY not set — admin/IMS endpoints are UNPROTECTED")
     await guru_kripa.ensure_worker_started()
+    if settings.openai_api_key:
+        asyncio.create_task(admin.auto_index_loop(settings.auto_index_interval_minutes))
     logger.info("All services ready")
     yield
 

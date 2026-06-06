@@ -19,6 +19,25 @@ logger = logging.getLogger(__name__)
 _index_lock = asyncio.Lock()
 
 
+async def auto_index_loop(interval_minutes: int):
+    """Background task (started from the app lifespan): every interval_minutes,
+    scan Drive and index any NEW images. Incremental — already-profiled images
+    are skipped, so an idle run costs nothing beyond the Drive listing."""
+    if interval_minutes <= 0:
+        logger.info("Auto-index disabled (AUTO_INDEX_INTERVAL_MINUTES=0)")
+        return
+    logger.info(f"Auto-index enabled — scanning Drive every {interval_minutes} min")
+    while True:
+        await asyncio.sleep(interval_minutes * 60)
+        if not state.openai_svc or _index_lock.locked():
+            continue
+        try:
+            logger.info("Auto-index: checking Drive for new images...")
+            await _index(None, False)
+        except Exception as e:
+            logger.error(f"Auto-index run failed: {e}")
+
+
 @router.get("/status")
 async def status():
     return {**state.cache.stats(), "index_running": _index_lock.locked()}

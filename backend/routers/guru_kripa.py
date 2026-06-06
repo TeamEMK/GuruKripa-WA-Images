@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 import state
 from config import settings
 from core.security import media_host_allowed, require_admin
-from services.openai_service import profile_to_embed_text
+from services.openai_service import profile_caption, profile_to_embed_text
 
 router = APIRouter(prefix="/guru-kripa")
 logger = logging.getLogger(__name__)
@@ -221,6 +221,30 @@ async def _send_exact(sender: str, stock: str, msg_id: str | None):
     await state.wa.send_image(sender, filename, f"✅ *{stock}* — exact match", quoted_msg_id=msg_id)
 
 
+def _build_caption(item: dict, score: float | None, is_first: bool) -> str:
+    """Compose a clean, human-readable WhatsApp caption for one matched item.
+
+    Line 1: stock number + match confidence.
+    Line 2: a short descriptor of the piece (metal / length / type)."""
+    stock = item["name"].rsplit(".", 1)[0]
+    desc = profile_caption(item.get("profile", {}))
+    # fall back to the flat tags if the profile gives us nothing descriptive
+    if not desc:
+        tags = state.ims.tags_for(item)
+        desc = ", ".join(tags[:4])
+
+    if score is None:
+        header = f"*{stock}*"
+    else:
+        pct = round(score * 100)
+        if is_first and score >= STRONG_MATCH:
+            header = f"✅ *{stock}* — Best match ({pct}%)"
+        else:
+            header = f"*{stock}* — {pct}% match"
+
+    return f"{header}\n{desc}" if desc else header
+
+
 async def _send_matches(sender: str, results: list[tuple[dict, float | None]], msg_id: str | None):
     """Send up to 5 available matches with confidence captions. results = (item, score|None)."""
     sent = 0
@@ -230,15 +254,7 @@ async def _send_matches(sender: str, results: list[tuple[dict, float | None]], m
         if not available or remark:
             continue
         filename = os.path.basename(item["local_path"])
-        tags = state.ims.tags_for(item)
-        tag_str = ", ".join(tags[:4])
-
-        if score is None:
-            caption = stock + (f"\n{tag_str}" if tag_str else "")
-        else:
-            pct = round(score * 100, 1)
-            label = "✅ best match" if (sent == 0 and score >= STRONG_MATCH) else f"{pct}% similar"
-            caption = f"*{stock}* — {label}" + (f"\n{tag_str}" if tag_str else "")
+        caption = _build_caption(item, score, is_first=(sent == 0))
 
         await asyncio.sleep(SEND_DELAY)
         try:
