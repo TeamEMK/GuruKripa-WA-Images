@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import os
+import re
 from collections import deque
 
 import httpx
@@ -220,18 +221,22 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
     if not results:
         await _reply_text(sender, f"❌ No matching items found for *{query_value or raw_query}*.", msg_id)
         return
-    await _send_matches(sender, results, msg_id)
+    # typed query → show only the stock number + descriptor, no match %
+    await _send_matches(sender, results, msg_id, show_score=False)
 
 
 async def _semantic_search(raw_query: str, keyword_fallback: str) -> list[tuple[dict, float | None]]:
-    """Embedding search first, then keyword fallback. Returns (item, score) pairs."""
+    """Embedding search first, then keyword fallback. Returns (item, score) pairs.
+    An explicit length in the query ('long'/'short') is enforced as a hard filter."""
     query_vec = await state.openai_svc.embed_text(raw_query)
-    results = state.cache.find_semantic(query_vec, k=5, min_score=settings.min_match_score)
+    results = state.cache.find_semantic(query_vec, k=MAX_MATCHES + 7, min_score=settings.min_match_score)
+    results = _enforce_length(raw_query, results)
     if results:
         logger.info(f"Semantic search for '{raw_query}' returned {len(results)} results")
-        return results
+        return results[:MAX_MATCHES]
     logger.info(f"Falling back to keyword search for '{keyword_fallback}'")
-    return [(m, None) for m in state.ims.find_by_color(keyword_fallback, limit=5)]
+    fallback = [(m, None) for m in state.ims.find_by_color(keyword_fallback, limit=MAX_MATCHES + 7)]
+    return _enforce_length(raw_query, fallback)[:MAX_MATCHES]
 
 
 async def _send_exact(sender: str, stock: str, msg_id: str | None) -> dict | None:
@@ -254,6 +259,42 @@ async def _send_exact(sender: str, stock: str, msg_id: str | None) -> dict | Non
     await asyncio.sleep(SEND_DELAY)
     await state.wa.send_image(sender, filename, f"✅ *{stock}* — exact match", quoted_msg_id=msg_id)
     return item
+
+
+# Length words a customer might type, grouped into the buckets that a piece's
+# profile["length"] uses. Plain cosine treats "long" vs "short" as a weak signal,
+# so an explicit length in the query is enforced as a HARD filter instead.
+_LONG_QUERY_WORDS = {"long", "opera", "layered", "haar", "rani"}
+_SHORT_QUERY_WORDS = {"short", "choker", "collar"}
+_LONG_PROFILE = {"long", "opera", "layered"}
+_SHORT_PROFILE = {"short", "medium-length", "choker"}
+
+
+def _query_length_intent(query: str) -> str | None:
+    """'long' / 'short' if the query explicitly asks for one, else None."""
+    tokens = set(re.findall(r"[a-z]+", (query or "").lower()))
+    if tokens & _LONG_QUERY_WORDS:
+        return "long"
+    if tokens & _SHORT_QUERY_WORDS:
+        return "short"
+    return None
+
+
+def _enforce_length(query: str, results: list[tuple[dict, float | None]]) -> list[tuple[dict, float | None]]:
+    """Drop results whose profiled length contradicts an explicit length in the
+    query (e.g. asking for a 'long' necklace must never return a 'short' one).
+    Pieces with no recorded length are kept — unknown, not contradicting."""
+    intent = _query_length_intent(query)
+    if not intent:
+        return results
+    banned = _SHORT_PROFILE if intent == "long" else _LONG_PROFILE
+    kept = []
+    for it, sc in results:
+        length = (it.get("profile", {}).get("length") or "").lower()
+        if length and length in banned:
+            continue
+        kept.append((it, sc))
+    return kept
 
 
 def _relevant(results: list[tuple[dict, float]], gap: float = RELEVANCE_GAP) -> list[tuple[dict, float]]:
@@ -301,6 +342,7 @@ async def _send_matches(
     limit: int = MAX_MATCHES,
     label_best: bool = True,
     notify_if_empty: bool = True,
+    show_score: bool = True,
 ):
     """Send up to `limit` AVAILABLE matches with confidence captions.
 
@@ -308,7 +350,9 @@ async def _send_matches(
     skipped without counting toward the limit. label_best marks the first sent
     item as the "Best match" (off when these are the similar pieces that follow an
     exact match). notify_if_empty sends the "no matches" notice when nothing went
-    out (off for the similar follow-up, where the exact match was already sent)."""
+    out (off for the similar follow-up, where the exact match was already sent).
+    show_score off hides the % entirely (used for typed/text queries — the customer
+    sees only the stock number and the descriptor)."""
     sent = 0
     for item, score in results:
         if sent >= limit:
@@ -318,7 +362,7 @@ async def _send_matches(
         if not available or remark:
             continue
         filename = os.path.basename(item["local_path"])
-        caption = _build_caption(item, score, is_first=(label_best and sent == 0))
+        caption = _build_caption(item, score if show_score else None, is_first=(label_best and sent == 0))
 
         await asyncio.sleep(SEND_DELAY)
         try:

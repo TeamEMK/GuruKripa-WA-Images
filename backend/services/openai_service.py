@@ -52,7 +52,7 @@ PROFILE_PROMPT = """You are an expert Indian jewelry classifier. Analyze ONLY th
 Return a SINGLE JSON object (no markdown, no commentary) with exactly these keys:
 
 {
-  "stock_number": string | null,   // ONLY if a code/tag is clearly printed on the item or a label, e.g. "9858", "S-1655". Never guess.
+  "stock_number": string | null,   // the item's stock code read from its paper tag — see "READING THE STOCK TAG" below. null only if no tag/code is visible.
   "description": string,           // one rich natural sentence describing the piece for search
   "category": string,              // ONE of: earrings, necklace, nath, tikka, ring, bracelet, bangle, pendant, set, kaan, chain, haar, choker
   "metal": string | null,          // ONE of: gold, silver, rose-gold, oxidized, two-tone
@@ -75,6 +75,19 @@ Critical rules:
 - NEVER report the white/cream photo background as a color. "white" means white stones/enamel ON the jewelry.
 - Only fill attributes you can clearly see; use null or [] when uncertain.
 - "moti" = "pearl". Use lowercase everywhere.
+
+READING THE STOCK TAG — most photos include a small white/cream OVAL paper tag tied
+to the piece with a few handwritten lines. The stock code is the SINGLE most
+important field, so read it carefully:
+- The stock number is the line written as "S-<number>" or "S - <number>"
+  (e.g. "S - 9417" → "9417",  "S-10350" → "10350"). Return just the code after "S".
+- IGNORE every other number on the tag — they are NOT the stock number:
+    * a circled number at the top-left (a batch/serial no.),
+    * any "BS-<number>" line (that is a bill number),
+    * any weight (a decimal like "14.86", often beside "gm").
+- Read it even when the handwriting is messy. Only return null when there is
+  genuinely no "S-" code visible anywhere.
+- A code printed directly on the metal counts too.
 
 SHAPE & STRUCTURE — describe the actual FORM of the piece, not just its type. Two
 gold necklaces can look completely different; "silhouette", "structure" and "motif"
