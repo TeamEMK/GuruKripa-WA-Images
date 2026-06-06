@@ -67,8 +67,10 @@ function useAutoRefresh<T>(url: string, intervalMs = 5000) {
 function useAdminKey() {
   const [key, setKey] = useState("");
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage
-    setKey(localStorage.getItem("adminKey") ?? "");
+    // Prefer a saved key; otherwise fall back to the build-time NEXT_PUBLIC_ADMIN_KEY.
+    const fallback = process.env.NEXT_PUBLIC_ADMIN_KEY ?? "";
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration
+    setKey(localStorage.getItem("adminKey") || fallback);
   }, []);
   const save = (k: string) => {
     setKey(k);
@@ -294,7 +296,7 @@ function DashboardTab({
           <div className="flex gap-2">
             <input
               type="password"
-              defaultValue={adminKey}
+              value={adminKey}
               placeholder="paste your ADMIN_API_KEY"
               onChange={(e) => onSaveKey(e.target.value.trim())}
               className="flex-1 rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none focus:border-indigo-400/60"
