@@ -33,6 +33,16 @@ SEND_DELAY = 5.0
 # Cosine score at/above which the top semantic result is called a "strong match".
 STRONG_MATCH = 0.55
 
+# Fulfillment policy for an image query:
+#   exact match on label  → send the exact piece + up to MAX_SIMILAR_AFTER_EXACT similar
+#   no exact match        → send up to MAX_MATCHES best matches
+MAX_MATCHES = 5
+MAX_SIMILAR_AFTER_EXACT = 4
+# A result only counts as "matching" if its cosine is within RELEVANCE_GAP of the
+# best hit. Weaker tail results are dropped, so when only 2-3 pieces genuinely
+# match we send 2-3 — never padded up to 5 with loosely-related items.
+RELEVANCE_GAP = 0.10
+
 
 async def _worker():
     """Consumes the queue sequentially — never processes two requests in parallel."""
@@ -149,28 +159,48 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
     if image_bytes:
         profile = await state.openai_svc.analyze_image_profile(image_bytes, msg_type)
 
-        # 1. Stock code visible on a label → exact lookup
-        stock = (profile.get("stock_number") or "").strip() if profile else ""
-        if stock:
-            await _send_exact(sender, stock, msg_id)
-            return
-
-        # 2. Visual/semantic match — embed the profile (+ any accompanying text)
+        # Embed the query once — reused for the exact-match "similar" follow-ups
+        # and for the best-matches path.
+        query_vec: list[float] | None = None
         if profile:
             embed_text = profile_to_embed_text(profile)
             if text:
                 embed_text = f"{embed_text} {text}".strip()  # "same item in black" etc.
             query_vec = await state.openai_svc.embed_text(embed_text)
-            results = state.cache.find_semantic(query_vec, k=5, min_score=settings.min_match_score)
+
+        # 1. Stock code on the label AND in inventory → send the exact piece first,
+        #    then follow it with up to 4 genuinely-similar pieces.
+        stock = (profile.get("stock_number") or "").strip() if profile else ""
+        if stock and state.ims.find_by_stock_number(stock):
+            exact = await _send_exact(sender, stock, msg_id)
+            if exact is not None and query_vec:
+                similar = state.cache.find_semantic(
+                    query_vec, k=MAX_SIMILAR_AFTER_EXACT + 6, min_score=settings.min_match_score
+                )
+                similar = _relevant([(it, sc) for it, sc in similar if it["id"] != exact["id"]])
+                if similar:
+                    await _send_matches(
+                        sender, similar, None,
+                        limit=MAX_SIMILAR_AFTER_EXACT, label_best=False, notify_if_empty=False,
+                    )
+            return
+
+        # 2. No exact match → up to 5 best matches, trimmed to those that genuinely
+        #    match (so only 2-3 are sent when only 2-3 are close).
+        if query_vec:
+            results = state.cache.find_semantic(
+                query_vec, k=MAX_MATCHES + 7, min_score=settings.min_match_score
+            )
+            results = _relevant(results)
             if results:
-                await _send_matches(sender, results, msg_id)
+                await _send_matches(sender, results, msg_id, limit=MAX_MATCHES)
                 return
 
         # 3. Fallback — keyword search from text or profile category/colors
         fallback_q = text or " ".join((profile or {}).get("colors", []) + [(profile or {}).get("category", "")])
-        matches = state.ims.find_by_color(fallback_q, limit=5)
+        matches = state.ims.find_by_color(fallback_q, limit=MAX_MATCHES)
         if matches:
-            await _send_matches(sender, [(m, None) for m in matches], msg_id)
+            await _send_matches(sender, [(m, None) for m in matches], msg_id, limit=MAX_MATCHES)
             return
 
         await _reply_text(sender, "❌ Could not identify the item. Please send a clearer image or type the stock number.", msg_id)
@@ -204,21 +234,39 @@ async def _semantic_search(raw_query: str, keyword_fallback: str) -> list[tuple[
     return [(m, None) for m in state.ims.find_by_color(keyword_fallback, limit=5)]
 
 
-async def _send_exact(sender: str, stock: str, msg_id: str | None):
+async def _send_exact(sender: str, stock: str, msg_id: str | None) -> dict | None:
+    """Send the exact-match image. Returns the item when it was actually sent
+    (available), or None when not found / reserved / unavailable (the customer is
+    told why). The caller uses the return value to decide whether to follow up
+    with similar pieces."""
     item = state.ims.find_by_stock_number(stock)
     if not item:
         await _reply_text(sender, f"❌ Item *{stock}* was not found in our inventory.", msg_id)
-        return
+        return None
     available, remark = state.ims.check_availability(stock)
     if remark:
         await _reply_text(sender, f"❌ Item *{stock}* is already reserved.\n_{remark}_", msg_id)
-        return
+        return None
     if not available:
         await _reply_text(sender, f"❌ Item *{stock}* is currently not available.", msg_id)
-        return
+        return None
     filename = os.path.basename(item["local_path"])
     await asyncio.sleep(SEND_DELAY)
     await state.wa.send_image(sender, filename, f"✅ *{stock}* — exact match", quoted_msg_id=msg_id)
+    return item
+
+
+def _relevant(results: list[tuple[dict, float]], gap: float = RELEVANCE_GAP) -> list[tuple[dict, float]]:
+    """Keep only results close to the best hit (results come sorted best-first).
+
+    This is what lets us send 2-3 images when only 2-3 genuinely match, instead of
+    padding to 5 with loosely-related pieces. Scoreless results (None) always pass."""
+    if not results:
+        return []
+    top = results[0][1]
+    if top is None:
+        return results
+    return [(it, sc) for it, sc in results if sc is None or sc >= top - gap]
 
 
 def _build_caption(item: dict, score: float | None, is_first: bool) -> str:
@@ -245,16 +293,32 @@ def _build_caption(item: dict, score: float | None, is_first: bool) -> str:
     return f"{header}\n{desc}" if desc else header
 
 
-async def _send_matches(sender: str, results: list[tuple[dict, float | None]], msg_id: str | None):
-    """Send up to 5 available matches with confidence captions. results = (item, score|None)."""
+async def _send_matches(
+    sender: str,
+    results: list[tuple[dict, float | None]],
+    msg_id: str | None,
+    *,
+    limit: int = MAX_MATCHES,
+    label_best: bool = True,
+    notify_if_empty: bool = True,
+):
+    """Send up to `limit` AVAILABLE matches with confidence captions.
+
+    results = (item, score|None), best-first. Unavailable/reserved items are
+    skipped without counting toward the limit. label_best marks the first sent
+    item as the "Best match" (off when these are the similar pieces that follow an
+    exact match). notify_if_empty sends the "no matches" notice when nothing went
+    out (off for the similar follow-up, where the exact match was already sent)."""
     sent = 0
     for item, score in results:
+        if sent >= limit:
+            break
         stock = item["name"].rsplit(".", 1)[0]
         available, remark = state.ims.check_availability(stock)
         if not available or remark:
             continue
         filename = os.path.basename(item["local_path"])
-        caption = _build_caption(item, score, is_first=(sent == 0))
+        caption = _build_caption(item, score, is_first=(label_best and sent == 0))
 
         await asyncio.sleep(SEND_DELAY)
         try:
@@ -263,7 +327,7 @@ async def _send_matches(sender: str, results: list[tuple[dict, float | None]], m
         except Exception as e:
             logger.error(f"Failed to send match: {e}")
 
-    if sent == 0:
+    if sent == 0 and notify_if_empty:
         await _reply_text(sender, "❌ No available matches found.", msg_id)
     else:
         logger.info(f"Sent {sent} matches to {sender}")

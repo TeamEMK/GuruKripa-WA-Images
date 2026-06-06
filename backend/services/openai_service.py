@@ -59,6 +59,9 @@ Return a SINGLE JSON object (no markdown, no commentary) with exactly these keys
   "stone_color": string[],         // visible stone/enamel colors: red, blue, green, white, yellow, pink, purple, pearl, multicolor, emerald, ruby, sapphire
   "colors": string[],              // dominant overall colors of the piece (metal + stones combined)
   "subtype": string | null,        // jhumka, stud, hoop, chandbali, drop, choker, haar, layered, statement, cluster
+  "silhouette": string | null,     // the overall OUTLINE you would sketch: e.g. "row of tapering spikes", "round central medallion", "broad collar / bib", "single drop pendant", "V-shaped drop", "linear bar", "choker band", "teardrop cluster"
+  "structure": string | null,      // how it is BUILT / arranged: e.g. "graduated spike danglers radiating from the centre", "central round pendant with hanging pearl tassels", "repeating identical articulated links", "multi-layer strands"
+  "motif": string[],               // the repeating decorative SHAPES, every one you see: e.g. ["spike","kalgi","spear"], ["floral","medallion"], ["paisley"], ["peacock"], ["round"], ["square","kundan"], ["leaf"]
   "size": string | null,           // OVERALL SCALE of the piece: small, medium, large, mini, heavy
   "style": string[],               // traditional, modern, antique, kundan, meenakari, polki, temple, plain, filigree, bridal, casual, oxidized, jadau, nakshi
   "length": string | null,         // HOW FAR IT HANGS: short, medium-length, long, opera, layered
@@ -72,6 +75,19 @@ Critical rules:
 - NEVER report the white/cream photo background as a color. "white" means white stones/enamel ON the jewelry.
 - Only fill attributes you can clearly see; use null or [] when uncertain.
 - "moti" = "pearl". Use lowercase everywhere.
+
+SHAPE & STRUCTURE — describe the actual FORM of the piece, not just its type. Two
+gold necklaces can look completely different; "silhouette", "structure" and "motif"
+are what tell them apart, so they MUST be filled whenever the form is visible:
+- "silhouette" = the overall outline a person would sketch (spikes/rays, round
+  medallion, broad collar/bib, single drop pendant, linear bar, choker band ...).
+- "structure" = how it is constructed and arranged (graduated tapering danglers,
+  central pendant with hanging tassels, repeating identical links, layered strands).
+- "motif" = every repeating decorative shape you can see (spike / kalgi / spear,
+  floral, paisley, peacock, round, square / kundan, leaf ...).
+Be concrete and visual. These three fields ARE the design identity of the piece —
+never leave them empty when the shape is visible, and never blur two different
+shapes into the same generic words.
 
 SIZE vs LENGTH — these are DIFFERENT and customers search by BOTH, do not confuse them:
 - "size" = how big/heavy the piece looks overall (small / medium / large / mini / heavy).
@@ -104,18 +120,48 @@ def _pdf_to_jpeg(pdf_bytes: bytes) -> bytes:
 
 def profile_to_embed_text(profile: dict) -> str:
     """Flatten a Vision profile into the string we embed for semantic search.
-    Folder names are appended by the caller (free labels from Drive structure)."""
+
+    Shape/structure terms are REPEATED so they dominate the embedding: two pieces
+    of the same category (e.g. "gold necklace") must be separated by their actual
+    FORM, not by shared material / occasion words. Occasion tags carry the least
+    visual signal, so they go last and unweighted. Folder names are appended by
+    the caller (free labels from Drive structure)."""
     parts: list[str] = []
     if profile.get("description"):
         parts.append(str(profile["description"]))
-    for key in ("category", "metal", "subtype", "size", "length"):
+
+    # ── Design identity (shape) — weighted 3× so FORM drives the match ───────
+    shape_terms: list[str] = []
+    for key in ("silhouette", "structure"):
+        val = profile.get(key)
+        if val:
+            shape_terms.append(str(val))
+    for v in profile.get("motif") or []:
+        if v:
+            shape_terms.append(str(v))
+    if shape_terms:
+        parts.extend([" ".join(shape_terms)] * 3)
+
+    # ── Type — weighted 2× ───────────────────────────────────────────────────
+    for key in ("category", "subtype"):
+        val = profile.get(key)
+        if val:
+            parts.extend([str(val)] * 2)
+
+    # ── Plain attributes — single weight ─────────────────────────────────────
+    for key in ("metal", "size", "length"):
         val = profile.get(key)
         if val:
             parts.append(str(val))
-    for key in ("colors", "stone_color", "style", "labels", "tags", "keywords"):
+    for key in ("colors", "stone_color", "style", "labels", "keywords"):
         vals = profile.get(key) or []
         if isinstance(vals, list):
             parts.extend(str(v) for v in vals if v)
+
+    # ── Occasion / mood tags last — least relevant to a visual match ─────────
+    for v in profile.get("tags") or []:
+        if v:
+            parts.append(str(v))
     return " ".join(parts).strip()
 
 
@@ -136,6 +182,9 @@ def profile_caption(profile: dict) -> str:
     length = length if length in {"long", "short", "opera", "layered"} else ""
     # if no length, fall back to overall size so the customer still gets a scale hint
     size = (profile.get("size") or "").strip()
+    # the dominant motif makes the descriptor concrete ("spike" vs generic "statement")
+    motifs = profile.get("motif") or []
+    motif = str(motifs[0]).strip() if motifs else ""
 
     parts: list[str] = []
     if metal:
@@ -144,7 +193,9 @@ def profile_caption(profile: dict) -> str:
         parts.append(length)
     elif size and size not in {"medium"}:
         parts.append(size)
-    if subtype:
+    if motif:
+        parts.append(motif)
+    if subtype and subtype != "statement":
         parts.append(subtype)
     if category:
         parts.append(category)
@@ -164,7 +215,7 @@ def profile_tags(profile: dict) -> list[str]:
         val = profile.get(key)
         if val:
             tags.append(str(val).lower())
-    for key in ("colors", "stone_color", "style", "labels", "tags"):
+    for key in ("colors", "stone_color", "style", "labels", "tags", "motif"):
         for v in profile.get(key) or []:
             if v:
                 tags.append(str(v).lower())
