@@ -29,8 +29,10 @@ class IMSService:
 
     def _save(self):
         os.makedirs("cache", exist_ok=True)
-        with open(REMARKS_FILE, "w") as f:
+        tmp = f"{REMARKS_FILE}.tmp"
+        with open(tmp, "w") as f:
             json.dump(self._remarks, f, indent=2)
+        os.replace(tmp, REMARKS_FILE)  # atomic — no corruption on crash
 
     # ── Tags ─────────────────────────────────────────────────────────────────
     @staticmethod
@@ -42,16 +44,23 @@ class IMSService:
 
     # ── Stock lookup ─────────────────────────────────────────────────────────
     def find_by_stock_number(self, stock_number: str) -> dict | None:
-        """Search cached Drive images for a filename that matches the stock number."""
+        """Search cached Drive images for a filename that matches the stock number.
+
+        Exact (whole-name) match wins. Otherwise a token match — the query must
+        equal a discrete token in the filename (so "Copy of 9858" → 9858), NOT a
+        loose substring (which let "165" wrongly match "1655")."""
         query = stock_number.strip().upper()
+        if not query:
+            return None
         for item in self.cache.images:
             name_no_ext = re.sub(r"\.[^.]+$", "", item["name"].upper())
             if query == name_no_ext:
                 return item
-        # Second pass: partial match (e.g. "Copy of 9858" → "9858")
+        # Token match: split the filename on non-alphanumerics, require exact token equality
         for item in self.cache.images:
             name_no_ext = re.sub(r"\.[^.]+$", "", item["name"].upper())
-            if query in name_no_ext:
+            tokens = re.split(r"[^A-Z0-9]+", name_no_ext)
+            if query in tokens:
                 return item
         return None
 

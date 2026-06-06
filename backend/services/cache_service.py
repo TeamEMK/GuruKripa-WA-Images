@@ -22,6 +22,14 @@ def _normalize(vec: np.ndarray) -> np.ndarray:
     return vec / (np.linalg.norm(vec) + 1e-8)
 
 
+def _atomic_pickle(path: str, obj) -> None:
+    """Write then atomically rename — a crash mid-write can't corrupt the file."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "wb") as f:
+        pickle.dump(obj, f)
+    os.replace(tmp, path)
+
+
 class CacheService:
     def __init__(self):
         os.makedirs(IMAGES_DIR, exist_ok=True)
@@ -76,14 +84,15 @@ class CacheService:
     def finalize(self):
         self.last_updated = datetime.now()
         self._rebuild_matrix()
-        with open(CACHE_FILE, "wb") as f:
-            pickle.dump({"images": self.images, "last_updated": self.last_updated}, f)
+        _atomic_pickle(CACHE_FILE, {"images": self.images, "last_updated": self.last_updated})
         logger.info(f"Cache saved: {len(self.images)} images, {len(self._emb_items)} embedded")
 
-    def find_semantic(self, query_vec: list[float] | np.ndarray, k: int = 5) -> list[tuple[dict, float]]:
+    def find_semantic(
+        self, query_vec: list[float] | np.ndarray, k: int = 5, min_score: float = 0.0
+    ) -> list[tuple[dict, float]]:
         """Cosine-similarity search over the OpenAI embedding vectors.
-        Returns up to k (image_item, score) pairs, best first. This is the unified
-        engine for both image→image and text→image search."""
+        Returns up to k (image_item, score) pairs, best first, dropping anything
+        below min_score. Unified engine for image→image and text→image search."""
         if self._emb_matrix is None:
             self._rebuild_matrix()
         if self._emb_matrix.size == 0 or query_vec is None or len(query_vec) == 0:
@@ -96,7 +105,7 @@ class CacheService:
         top = min(k, len(sims))
         idx = np.argpartition(sims, -top)[-top:]
         idx = idx[np.argsort(sims[idx])[::-1]]
-        return [(self._emb_items[i], float(sims[i])) for i in idx]
+        return [(self._emb_items[i], float(sims[i])) for i in idx if sims[i] >= min_score]
 
     def log_match(self, sender: str, query_url: str, matches: list[dict], scores: list[float]):
         entry = {
@@ -107,8 +116,7 @@ class CacheService:
         }
         self.match_history.insert(0, entry)
         self.match_history = self.match_history[:MAX_MATCH_HISTORY]
-        with open(MATCHES_FILE, "wb") as f:
-            pickle.dump(self.match_history, f)
+        _atomic_pickle(MATCHES_FILE, self.match_history)
 
     def profile_stats(self) -> dict:
         total = len(self.images)

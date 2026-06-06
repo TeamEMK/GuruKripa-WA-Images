@@ -4,27 +4,29 @@ import os
 import re
 
 import numpy as np
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends
 
 import state
 from config import settings
+from core.security import require_admin
 from services.cache_service import IMAGES_DIR
 from services.openai_service import profile_to_embed_text
 
 router = APIRouter(prefix="/admin")
 logger = logging.getLogger(__name__)
 
-_index_running = False
+# Lock guards the indexing pass — replaces the racy boolean flag (BUG-06).
+_index_lock = asyncio.Lock()
 
 
 @router.get("/status")
 async def status():
-    return {**state.cache.stats(), "index_running": _index_running}
+    return {**state.cache.stats(), "index_running": _index_lock.locked()}
 
 
 @router.get("/index/status")
 async def index_status():
-    return {**state.cache.profile_stats(), "index_running": _index_running}
+    return {**state.cache.profile_stats(), "index_running": _index_lock.locked()}
 
 
 @router.get("/matches")
@@ -32,26 +34,26 @@ async def matches(limit: int = 20):
     return {"matches": state.cache.match_history[:limit]}
 
 
-@router.post("/refresh")
+@router.post("/refresh", dependencies=[Depends(require_admin)])
 async def refresh(background: BackgroundTasks):
     """Full index: scan Drive, download + Vision-profile + embed every image that
     isn't profiled yet."""
     if not state.openai_svc:
         return {"status": "error", "reason": "OPENAI_API_KEY not set"}
-    if _index_running:
+    if _index_lock.locked():
         return {"status": "already_running"}
     background.add_task(_index, None, False)
     return {"status": "started", **state.cache.profile_stats()}
 
 
-@router.post("/reindex")
+@router.post("/reindex", dependencies=[Depends(require_admin)])
 async def reindex(background: BackgroundTasks, limit: int = 30, force: bool = False):
     """Test-batch tool: profile up to `limit` images so you can eyeball quality in
     /admin/catalog before running the full /admin/refresh. force=true re-profiles
     already-indexed images (use to re-test after prompt changes)."""
     if not state.openai_svc:
         return {"status": "error", "reason": "OPENAI_API_KEY not set"}
-    if _index_running:
+    if _index_lock.locked():
         return {"status": "already_running"}
     background.add_task(_index, limit, force)
     return {"status": "started", "limit": limit, "force": force, **state.cache.profile_stats()}
@@ -61,11 +63,13 @@ async def _index(limit: int | None, force: bool):
     """Scan Drive and build Vision profile + embedding for each image.
     limit caps how many images are *processed* this run (for cheap test batches).
     force re-profiles images that already have a profile."""
-    global _index_running
-    _index_running = True
+    if _index_lock.locked():
+        logger.info("Index already running — skipping duplicate run")
+        return
     loop = asyncio.get_event_loop()
     processed = 0
 
+    await _index_lock.acquire()
     try:
         logger.info("Scanning Google Drive...")
         images = await loop.run_in_executor(None, state.drive.list_images, settings.drive_folder_id)
@@ -126,7 +130,7 @@ async def _index(limit: int | None, force: bool):
     except Exception as e:
         logger.error(f"Index failed: {e}")
     finally:
-        _index_running = False
+        _index_lock.release()
 
 
 @router.get("/catalog")
@@ -150,7 +154,7 @@ async def catalog():
     return {"items": items}
 
 
-@router.delete("/cache")
+@router.delete("/cache", dependencies=[Depends(require_admin)])
 async def clear_cache():
     """Wipe all cached profiles, embeddings and images (use before a full re-index)."""
     for item in state.cache.images:

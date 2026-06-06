@@ -7,10 +7,11 @@ import os
 from collections import deque
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 import state
 from config import settings
+from core.security import media_host_allowed, require_admin
 from services.openai_service import profile_to_embed_text
 
 router = APIRouter(prefix="/guru-kripa")
@@ -50,8 +51,8 @@ async def _worker():
             _queue.task_done()
 
 
-@router.on_event("startup")
-async def start_worker():
+async def ensure_worker_started():
+    """Called from the app lifespan (main.py) — starts the single queue worker once."""
     global _worker_started
     if not _worker_started:
         asyncio.create_task(_worker())
@@ -63,14 +64,17 @@ async def start_worker():
 async def receive_webhook(request: Request, background: BackgroundTasks):
     body = await request.body()
 
-    if settings.guru_kripa_webhook_secret:
-        sig = request.headers.get("x-waumfy-signature", "").removeprefix("sha256=")
-        expected = hmac.new(
-            settings.guru_kripa_webhook_secret.encode(), body, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            logger.warning(f"Guru Kripa signature mismatch — got: {sig}")
-            raise HTTPException(status_code=401, detail="Invalid signature")
+    # Fail closed: refuse if no secret is configured (SEC-01).
+    if not settings.guru_kripa_webhook_secret:
+        logger.error("guru_kripa_webhook_secret not set — rejecting webhook")
+        raise HTTPException(status_code=503, detail="webhook not configured")
+    sig = request.headers.get("x-waumfy-signature", "").removeprefix("sha256=")
+    expected = hmac.new(
+        settings.guru_kripa_webhook_secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        logger.warning("Guru Kripa signature mismatch")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
     payload = json.loads(body)
     data = payload.get("data", {})
@@ -122,9 +126,9 @@ async def receive_webhook(request: Request, background: BackgroundTasks):
 
 
 async def _process(image_url: str | None, text: str | None, msg_type: str, sender: str, msg_id: str | None = None):
-    # Download media
+    # Download media (SSRF guard: only from trusted media hosts)
     image_bytes = None
-    if image_url:
+    if image_url and media_host_allowed(image_url):
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(image_url, headers={"X-API-Key": settings.wa_api_key})
@@ -157,7 +161,7 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
             if text:
                 embed_text = f"{embed_text} {text}".strip()  # "same item in black" etc.
             query_vec = await state.openai_svc.embed_text(embed_text)
-            results = state.cache.find_semantic(query_vec, k=5)
+            results = state.cache.find_semantic(query_vec, k=5, min_score=settings.min_match_score)
             if results:
                 await _send_matches(sender, results, msg_id)
                 return
@@ -192,7 +196,7 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
 async def _semantic_search(raw_query: str, keyword_fallback: str) -> list[tuple[dict, float | None]]:
     """Embedding search first, then keyword fallback. Returns (item, score) pairs."""
     query_vec = await state.openai_svc.embed_text(raw_query)
-    results = state.cache.find_semantic(query_vec, k=5)
+    results = state.cache.find_semantic(query_vec, k=5, min_score=settings.min_match_score)
     if results:
         logger.info(f"Semantic search for '{raw_query}' returned {len(results)} results")
         return results
@@ -274,7 +278,7 @@ async def get_ims():
     return state.ims.all_remarks()
 
 
-@router.post("/ims/{stock_number}/reserve")
+@router.post("/ims/{stock_number}/reserve", dependencies=[Depends(require_admin)])
 async def reserve_item(stock_number: str, client_name: str = ""):
     state.ims.set_availability(
         stock_number,
@@ -284,13 +288,13 @@ async def reserve_item(stock_number: str, client_name: str = ""):
     return {"status": "reserved", "stock_number": stock_number.upper()}
 
 
-@router.post("/ims/{stock_number}/release")
+@router.post("/ims/{stock_number}/release", dependencies=[Depends(require_admin)])
 async def release_item(stock_number: str):
     state.ims.set_availability(stock_number, available=True, client_remark=None)
     return {"status": "released", "stock_number": stock_number.upper()}
 
 
-@router.post("/ims/{stock_number}/sold")
+@router.post("/ims/{stock_number}/sold", dependencies=[Depends(require_admin)])
 async def mark_sold(stock_number: str):
     state.ims.set_availability(stock_number, available=False, client_remark="Sold")
     return {"status": "sold", "stock_number": stock_number.upper()}

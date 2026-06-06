@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import logging
 
 import httpx
@@ -7,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 import state
 from config import settings
+from core.security import media_host_allowed
 from services.openai_service import profile_to_embed_text
 
 router = APIRouter()
@@ -45,23 +47,22 @@ def _is_group(jid: str) -> bool:
 async def receive_webhook(request: Request, background: BackgroundTasks):
     body = await request.body()
 
-    # Verify the request is genuinely from aumpfy
-    if settings.webhook_secret:
-        sig = request.headers.get("x-waumfy-signature", "")
-        sig = sig.removeprefix("sha256=")  # handle both plain hex and "sha256=..." formats
-        expected = hmac.new(
-            settings.webhook_secret.encode(), body, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            logger.warning(f"Signature mismatch — got: {sig}")
-            raise HTTPException(status_code=401, detail="Invalid signature")
+    # Verify the request is genuinely from aumpfy. Fail closed (SEC-01).
+    if not settings.webhook_secret:
+        logger.error("webhook_secret not set — rejecting webhook")
+        raise HTTPException(status_code=503, detail="webhook not configured")
+    sig = request.headers.get("x-waumfy-signature", "").removeprefix("sha256=")
+    expected = hmac.new(settings.webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        logger.warning("Signature mismatch")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
-    import json
     payload = json.loads(body)
-    logger.info(f"Webhook payload: {payload}")
 
     image_url = _extract_image_url(payload)
     sender = _extract_sender(payload)
+    # Log only non-sensitive metadata, never the full payload (SEC-04)
+    logger.info(f"Webhook — sender={sender} has_image={bool(image_url)}")
 
     if not image_url:
         return {"status": "skipped", "reason": "no image found in payload"}
@@ -78,7 +79,9 @@ async def receive_webhook(request: Request, background: BackgroundTasks):
 
 
 async def _process(image_url: str, sender: str):
-    # Download the incoming image (aumpfy media URLs need the API key)
+    # Download the incoming image (SSRF guard: only from trusted media hosts)
+    if not media_host_allowed(image_url):
+        return
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
@@ -102,7 +105,7 @@ async def _process(image_url: str, sender: str):
         return
 
     query_vec = await state.openai_svc.embed_text(profile_to_embed_text(profile))
-    results = state.cache.find_semantic(query_vec, k=5)
+    results = state.cache.find_semantic(query_vec, k=5, min_score=settings.min_match_score)
     if not results:
         logger.warning("No matches — cache may be empty, run POST /admin/refresh first")
         return

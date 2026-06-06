@@ -147,7 +147,9 @@ class OpenAIService:
                 b64 = base64.b64encode(image_bytes).decode()
                 content.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"},
+                    # "low" detail — this path only classifies (stock vs describe);
+                    # rich attribute extraction uses analyze_image_profile (high).
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"},
                 })
 
         if not content:
@@ -242,7 +244,3 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"embed_text failed: {e}")
             return []
-
-    async def extract_stock_number(self, image_bytes, text, media_type="image"):
-        qtype, value = await self.analyze_query(image_bytes, text, media_type)
-        return value if qtype == "stock" else None

@@ -3,14 +3,19 @@
 import { useCallback, useEffect, useState } from "react";
 
 const API = "/api/backend";
+// Sent as X-Admin-Key on mutating calls; set NEXT_PUBLIC_ADMIN_KEY when the
+// backend has ADMIN_API_KEY configured.
+const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_KEY ?? "";
+const adminHeaders: HeadersInit = ADMIN_KEY ? { "X-Admin-Key": ADMIN_KEY } : {};
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type CacheStatus = {
   total_images: number;
+  profiled: number;
   last_updated: string | null;
   cache_size_mb: number;
-  rebuild_running: boolean;
+  index_running: boolean;
 };
 
 type MatchEntry = {
@@ -25,7 +30,11 @@ type CatalogItem = {
   name: string;
   stock: string;
   folder_path: string[];
-  color_tags: string[];
+  category: string | null;
+  colors: string[];
+  description: string | null;
+  tags: string[];
+  profiled: boolean;
   image_url: string;
 };
 
@@ -79,11 +88,13 @@ export default function App() {
     setRebuilding(true);
     setMsg("");
     try {
-      const res = await fetch(`${API}/admin/rebuild-all`, { method: "POST" });
+      const res = await fetch(`${API}/admin/refresh`, { method: "POST", headers: adminHeaders });
+      if (res.status === 401) { setMsg("Unauthorized — set NEXT_PUBLIC_ADMIN_KEY to match the backend."); return; }
       const body = await res.json();
       setMsg(
-        body.status === "started" ? "Rebuilding cache + color index — this takes a few minutes."
+        body.status === "started" ? "Indexing from Drive (OpenAI Vision) — this takes a few minutes."
           : body.status === "already_running" ? "Already running…"
+          : body.status === "error" ? (body.reason ?? "error")
           : body.status
       );
       refreshStatus();
@@ -105,7 +116,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-white tracking-tight">WA Image Matcher</h1>
-            <p className="text-zinc-500 text-xs mt-0.5">Guru Kripa · CNN similarity · Google Drive</p>
+            <p className="text-zinc-500 text-xs mt-0.5">Guru Kripa · OpenAI Vision · Google Drive</p>
           </div>
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${statusError ? "bg-red-500" : "bg-green-500"}`} />
@@ -197,16 +208,16 @@ function DashboardTab({
         <div className="flex flex-wrap gap-3">
           <button
             onClick={onRebuildAll}
-            disabled={rebuilding || !!status?.rebuild_running}
+            disabled={rebuilding || !!status?.index_running}
             className="px-5 py-2.5 rounded-lg bg-green-600 text-white font-medium text-sm
               hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {status?.rebuild_running ? "Rebuilding…" : rebuilding ? "Starting…" : "Rebuild & Index from Drive"}
+            {status?.index_running ? "Indexing…" : rebuilding ? "Starting…" : "Index from Drive"}
           </button>
         </div>
         {msg && <p className="text-sm text-zinc-400">{msg}</p>}
         <p className="text-xs text-zinc-600">
-          Scans Google Drive, downloads images, extracts CNN embeddings, then builds color + folder index.
+          Scans Google Drive, downloads images, and builds an OpenAI Vision profile + embedding for each.
         </p>
       </div>
     </div>
@@ -223,8 +234,9 @@ function CatalogTab({ items }: { items: CatalogItem[] }) {
     const q = search.toLowerCase();
     return (
       item.stock.toLowerCase().includes(q) ||
+      (item.category?.toLowerCase().includes(q) ?? false) ||
       item.folder_path.some((f) => f.toLowerCase().includes(q)) ||
-      item.color_tags.some((t) => t.toLowerCase().includes(q))
+      item.tags.some((t) => t.toLowerCase().includes(q))
     );
   });
 
@@ -335,9 +347,9 @@ function ImageCard({ item }: { item: CatalogItem }) {
         )}
 
         {/* Color/type tags */}
-        {item.color_tags.length > 0 && (
+        {item.tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {item.color_tags.map((tag, i) => (
+            {item.tags.map((tag, i) => (
               <span key={i} className={`px-2 py-0.5 rounded-full text-xs font-medium ${tagColor(tag)}`}>
                 {tag}
               </span>
