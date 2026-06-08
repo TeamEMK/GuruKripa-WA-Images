@@ -166,6 +166,8 @@ async def catalog():
             "category": profile.get("category"),
             "colors": profile.get("colors", []),
             "description": profile.get("description"),
+            "weight": profile.get("weight"),
+            "length": profile.get("length"),
             "tags": state.ims.tags_for(img) if state.ims else [],
             "profiled": img.get("embedding") is not None,
             "image_url": f"/images/{os.path.basename(img['local_path'])}",

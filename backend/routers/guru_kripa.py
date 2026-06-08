@@ -335,14 +335,22 @@ def _enforce_weight(query: str, results: list[tuple[dict, float | None]]) -> lis
     lo, hi = rng
     kept = []
     for it, sc in results:
-        w = it.get("profile", {}).get("weight")
-        try:
-            w = float(w)
-        except (TypeError, ValueError):
-            continue
+        w = _coerce_weight(it.get("profile", {}).get("weight"))
+        if w is None:
+            continue  # unknown weight can't satisfy an explicit weight query
         if lo <= w <= hi:
             kept.append((it, sc))
     return kept
+
+
+def _coerce_weight(w) -> float | None:
+    """Read a numeric gram value from a stored weight (number, '17.479', '17.479 gm')."""
+    if w is None:
+        return None
+    if isinstance(w, (int, float)):
+        return float(w)
+    m = re.search(r"\d+(?:\.\d+)?", str(w))
+    return float(m.group()) if m else None
 
 
 def _relevant(results: list[tuple[dict, float]], gap: float = RELEVANCE_GAP) -> list[tuple[dict, float]]:
