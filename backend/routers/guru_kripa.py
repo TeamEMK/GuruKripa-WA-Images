@@ -230,13 +230,13 @@ async def _semantic_search(raw_query: str, keyword_fallback: str) -> list[tuple[
     An explicit length in the query ('long'/'short') is enforced as a hard filter."""
     query_vec = await state.openai_svc.embed_text(raw_query)
     results = state.cache.find_semantic(query_vec, k=MAX_MATCHES + 7, min_score=settings.min_match_score)
-    results = _enforce_length(raw_query, results)
+    results = _enforce_weight(raw_query, _enforce_length(raw_query, results))
     if results:
         logger.info(f"Semantic search for '{raw_query}' returned {len(results)} results")
         return results[:MAX_MATCHES]
     logger.info(f"Falling back to keyword search for '{keyword_fallback}'")
     fallback = [(m, None) for m in state.ims.find_by_color(keyword_fallback, limit=MAX_MATCHES + 7)]
-    return _enforce_length(raw_query, fallback)[:MAX_MATCHES]
+    return _enforce_weight(raw_query, _enforce_length(raw_query, fallback))[:MAX_MATCHES]
 
 
 async def _send_exact(sender: str, stock: str, msg_id: str | None) -> dict | None:
@@ -294,6 +294,54 @@ def _enforce_length(query: str, results: list[tuple[dict, float | None]]) -> lis
         if length and length in banned:
             continue
         kept.append((it, sc))
+    return kept
+
+
+def _query_weight_range(query: str) -> tuple[float, float] | None:
+    """Parse a weight constraint in grams from the query, e.g. 'between 35-37 grams',
+    '35 to 37 gram', 'under 50g', 'over 40 grams', '40 gram'. Returns (min, max) in
+    grams, or None when the query has no gram-based weight constraint."""
+    q = (query or "").lower()
+    if not re.search(r"\d\s*(?:g|gm|gms|gram|grams)\b", q):
+        return None
+    # explicit range: "35-37", "35 to 37", "35 and 37", "35 – 37"
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:-|–|to|and)\s*(\d+(?:\.\d+)?)", q)
+    if m:
+        lo, hi = float(m.group(1)), float(m.group(2))
+        return (min(lo, hi), max(lo, hi))
+    # upper bound: "under / below / less than / up to / max 50"
+    m = re.search(r"(?:under|below|less than|upto|up to|max|maximum)\s*(\d+(?:\.\d+)?)", q)
+    if m:
+        return (0.0, float(m.group(1)))
+    # lower bound: "over / above / more than / at least / min 40"
+    m = re.search(r"(?:over|above|more than|at least|min|minimum)\s*(\d+(?:\.\d+)?)", q)
+    if m:
+        return (float(m.group(1)), float("inf"))
+    # single value: "40 grams" / "around 40 gram" → ±2g tolerance
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:g|gm|gms|gram|grams)\b", q)
+    if m:
+        v = float(m.group(1))
+        return (v - 2.0, v + 2.0)
+    return None
+
+
+def _enforce_weight(query: str, results: list[tuple[dict, float | None]]) -> list[tuple[dict, float | None]]:
+    """Keep only results whose net weight falls inside an explicit gram range in the
+    query. When the query asks by weight, items with no recorded weight cannot be
+    confirmed, so they are dropped."""
+    rng = _query_weight_range(query)
+    if not rng:
+        return results
+    lo, hi = rng
+    kept = []
+    for it, sc in results:
+        w = it.get("profile", {}).get("weight")
+        try:
+            w = float(w)
+        except (TypeError, ValueError):
+            continue
+        if lo <= w <= hi:
+            kept.append((it, sc))
     return kept
 
 

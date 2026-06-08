@@ -53,6 +53,7 @@ Return a SINGLE JSON object (no markdown, no commentary) with exactly these keys
 
 {
   "stock_number": string | null,   // the item's stock code read from its paper tag — see "READING THE STOCK TAG" below. null only if no tag/code is visible.
+  "weight": number | null,         // net weight in grams read from the paper tag — see "READING THE STOCK TAG" below. null if no weight is written.
   "description": string,           // one rich natural sentence describing the piece for search
   "category": string,              // ONE of: earrings, necklace, nath, tikka, ring, bracelet, bangle, pendant, set, kaan, chain, haar, choker
   "metal": string | null,          // ONE of: gold, silver, rose-gold, oxidized, two-tone
@@ -88,6 +89,11 @@ important field, so read it carefully:
 - Read it even when the handwriting is messy. Only return null when there is
   genuinely no "S-" code visible anywhere.
 - A code printed directly on the metal counts too.
+- WEIGHT (grams): read the item's NET weight into "weight" as a number. Tags often
+  show a breakdown — a gross weight (e.g. "70.65"), a pearl/stone weight (e.g.
+  "P:14.582"), and a final UNDERLINED total at the BOTTOM (e.g. "56.068"). That
+  underlined bottom total is the net weight — return it (56.068). If the tag shows
+  only one weight number (e.g. "14.86 gm"), use that. null if no weight is written.
 
 SHAPE & STRUCTURE — describe the actual FORM of the piece, not just its type. Two
 gold necklaces can look completely different; "silhouette", "structure" and "motif"
