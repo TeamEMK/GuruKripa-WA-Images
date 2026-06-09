@@ -194,6 +194,11 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
             )
             results = _relevant(results)
             if results:
+                state.cache.log_match(
+                    sender, image_url or "",
+                    [it for it, _ in results[:MAX_MATCHES]],
+                    [sc or 0.0 for _, sc in results[:MAX_MATCHES]],
+                )
                 await _send_matches(sender, results, msg_id, limit=MAX_MATCHES)
                 return
 
@@ -221,6 +226,11 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
     if not results:
         await _reply_text(sender, f"❌ No matching items found for *{query_value or raw_query}*.", msg_id)
         return
+    state.cache.log_match(
+        sender, "",
+        [it for it, _ in results],
+        [sc or 0.0 for _, sc in results],
+    )
     # typed query → show only the stock number + descriptor, no match %
     await _send_matches(sender, results, msg_id, show_score=False)
 
@@ -230,13 +240,13 @@ async def _semantic_search(raw_query: str, keyword_fallback: str) -> list[tuple[
     An explicit length in the query ('long'/'short') is enforced as a hard filter."""
     query_vec = await state.openai_svc.embed_text(raw_query)
     results = state.cache.find_semantic(query_vec, k=MAX_MATCHES + 7, min_score=settings.min_match_score)
-    results = _enforce_weight(raw_query, _enforce_length(raw_query, results))
+    results = _enforce_category(raw_query, _enforce_weight(raw_query, _enforce_length(raw_query, results)))
     if results:
         logger.info(f"Semantic search for '{raw_query}' returned {len(results)} results")
         return results[:MAX_MATCHES]
     logger.info(f"Falling back to keyword search for '{keyword_fallback}'")
     fallback = [(m, None) for m in state.ims.find_by_color(keyword_fallback, limit=MAX_MATCHES + 7)]
-    return _enforce_weight(raw_query, _enforce_length(raw_query, fallback))[:MAX_MATCHES]
+    return _enforce_category(raw_query, _enforce_weight(raw_query, _enforce_length(raw_query, fallback)))[:MAX_MATCHES]
 
 
 async def _send_exact(sender: str, stock: str, msg_id: str | None) -> dict | None:
@@ -268,6 +278,62 @@ _LONG_QUERY_WORDS = {"long", "opera", "layered", "haar", "rani"}
 _SHORT_QUERY_WORDS = {"short", "choker", "collar"}
 _LONG_PROFILE = {"long", "opera", "layered"}
 _SHORT_PROFILE = {"short", "medium-length", "choker"}
+
+# Query word → accepted profile categories (hard filter on semantic results).
+# Covers all Drive folder names + common customer query words.
+_TYPE_ALIASES: dict[str, set[str]] = {
+    # earrings family
+    "earrings": {"earrings"}, "earring": {"earrings"},
+    "bali": {"earrings"}, "chand": {"earrings"},   # "chand bali"
+    "chandbali": {"earrings"}, "jhumka": {"earrings"}, "jhumki": {"earrings"},
+    "stud": {"earrings"}, "hoop": {"earrings"}, "tops": {"earrings"},
+    "gutta": {"earrings"}, "pussal": {"earrings"},  # gutta pussal
+    "kaan": {"earrings", "kaan"},
+    # nose ring
+    "nath": {"nath"},
+    # tikka / forehead
+    "tikka": {"tikka"}, "tika": {"tikka"}, "pika": {"tikka"},
+    "maang-tikka": {"tikka"}, "matha": {"tikka"}, "patti": {"tikka"},
+    # necklace family
+    "necklace": {"necklace", "haar", "choker", "hasli"},
+    "haar": {"necklace", "haar"},
+    "choker": {"necklace", "choker"}, "chokar": {"necklace", "choker"},
+    "hasli": {"hasli", "necklace"},
+    "kashu": {"necklace"}, "mala": {"necklace", "haar"},
+    "jalebi": {"necklace"}, "mini": {"necklace"},
+    "mango": {"necklace", "haar"},
+    # pendant
+    "pendant": {"pendant"}, "magari": {"pendant"},
+    # bangle / bracelet
+    "bangle": {"bangle"}, "bracelet": {"bracelet"},
+    # belt / kamarband
+    "belt": {"kamarband"}, "kamarband": {"kamarband"},
+    # hath phool (hand ornament)
+    "hath": {"hath phool"}, "hathpool": {"hath phool"},
+    # vanki (armlet)
+    "vanki": {"vanki"},
+    # others
+    "ring": {"ring"}, "chain": {"chain"}, "set": {"set"},
+}
+
+
+def _enforce_category(query: str, results: list[tuple[dict, float | None]]) -> list[tuple[dict, float | None]]:
+    """Drop results whose profile category doesn't match an explicit jewelry type
+    in the query. Items with no recorded category are kept (unknown, not wrong).
+    E.g. 'nakshi bali' → only earrings; 'nakshi belt' → only kamarband."""
+    tokens = set(re.findall(r"[a-z]+", (query or "").lower()))
+    accepted: set[str] = set()
+    for token in tokens:
+        if token in _TYPE_ALIASES:
+            accepted |= _TYPE_ALIASES[token]
+    if not accepted:
+        return results
+    kept = []
+    for it, sc in results:
+        category = (it.get("profile", {}).get("category") or "").lower()
+        if not category or category in accepted:
+            kept.append((it, sc))
+    return kept
 
 
 def _query_length_intent(query: str) -> str | None:
@@ -378,14 +444,10 @@ def _build_caption(item: dict, score: float | None, is_first: bool) -> str:
         tags = state.ims.tags_for(item)
         desc = ", ".join(tags[:4])
 
-    if score is None:
-        header = f"*{stock}*"
+    if score is not None and is_first and score >= STRONG_MATCH:
+        header = f"✅ *{stock}* — Best match"
     else:
-        pct = round(score * 100)
-        if is_first and score >= STRONG_MATCH:
-            header = f"✅ *{stock}* — Best match ({pct}%)"
-        else:
-            header = f"*{stock}* — {pct}% match"
+        header = f"*{stock}*"
 
     return f"{header}\n{desc}" if desc else header
 

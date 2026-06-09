@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+from collections import deque
 
 import numpy as np
 from fastapi import APIRouter, BackgroundTasks, Depends
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Lock guards the indexing pass — replaces the racy boolean flag (BUG-06).
 _index_lock = asyncio.Lock()
+
+# Live log buffer — cleared at the start of each index run, capped at 200 lines.
+_index_log: deque[str] = deque(maxlen=200)
 
 
 async def auto_index_loop(interval_minutes: int):
@@ -46,6 +50,11 @@ async def status():
 @router.get("/index/status")
 async def index_status():
     return {**state.cache.profile_stats(), "index_running": _index_lock.locked()}
+
+
+@router.get("/index/log")
+async def index_log():
+    return {"log": list(_index_log), "running": _index_lock.locked()}
 
 
 @router.get("/matches")
@@ -88,11 +97,14 @@ async def _index(limit: int | None, force: bool):
     loop = asyncio.get_event_loop()
     processed = 0
 
+    _index_log.clear()
     await _index_lock.acquire()
     try:
+        _index_log.append("Scanning Google Drive…")
         logger.info("Scanning Google Drive...")
         images = await loop.run_in_executor(None, state.drive.list_images, settings.drive_folder_id)
         logger.info(f"Found {len(images)} images in Drive")
+        _index_log.append(f"Found {len(images)} images in Drive")
 
         existing = {d["id"]: d for d in state.cache.images}
 
@@ -139,13 +151,20 @@ async def _index(limit: int | None, force: bool):
                     profile=profile, embedding=np.asarray(embedding, dtype=np.float32),
                 )
                 processed += 1
-                logger.info(f"Indexed [{processed}]: {img['name']} → {profile.get('category')} {profile.get('colors')}")
+                cat = profile.get("category", "?")
+                colors = ", ".join(profile.get("colors") or []) or "—"
+                stock = re.sub(r"\.[^.]+$", "", img["name"])
+                msg = f"[{processed}] {stock} → {cat} · {colors}"
+                logger.info(f"Indexed {msg}")
+                _index_log.append(msg)
                 await asyncio.sleep(0.2)  # gentle rate limiting
             except Exception as e:
                 logger.error(f"Failed to index {img['name']}: {e}")
+                _index_log.append(f"⚠ Failed: {img['name']} — {e}")
 
         state.cache.finalize()
         logger.info(f"Index complete — processed {processed} images this run")
+        _index_log.append(f"✅ Done — {processed} images indexed")
     except Exception as e:
         logger.error(f"Index failed: {e}")
     finally:

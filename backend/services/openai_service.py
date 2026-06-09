@@ -32,7 +32,13 @@ Analyze the customer's image and/or message and return ONE of these formats:
 Rules:
 - Return ONLY one of the three formats above - nothing else
 - Stock numbers look like: 9858, 10468, S-1655, S-1387 (numeric or alphanumeric)
-- Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain, nath, tikka, kaan, maang-tikka
+- Jewelry types: earrings, necklace, ring, bracelet, bangle, pendant, set, chain, nath, tikka, kaan, maang-tikka, pika, kamarband, hasli, hath phool, vanki, matha patti, gutta pussal, kashu mala, mango mala, jalebi necklace, magari pendant, tops, jhumki, chand bali, chokar, tika
+- Aliases (use the mapped keyword):
+  "pika" / "tika" = tikka | "belt" = kamarband | "bali" / "chand bali" / "chandbali" = earrings (chandbali subtype)
+  "chokar" = choker (necklace) | "jhumki" / "jhumka" = earrings (jhumka subtype) | "tops" = earrings (stud subtype)
+  "gutta pussal" = earrings | "hasli" = necklace (rigid torque) | "hath phool" / "hathpool" = hath phool (hand ornament)
+  "vanki" = vanki (armlet) | "matha patti" = tikka | "kashu mala" / "kashu" = necklace
+  "mango mala" = necklace (haar) | "jalebi necklace" / "jalebi" = necklace | "magari pendant" / "magari" = pendant
 - Subtypes: jhumka, stud, hoop, chandbali, drop, choker, haar, layered, long, short
 - Sizes: small, medium, large, mini, heavy, statement
 - Necklace lengths: short, medium-length, long, opera, layered
@@ -55,7 +61,7 @@ Return a SINGLE JSON object (no markdown, no commentary) with exactly these keys
   "stock_number": string | null,   // the item's stock code read from its paper tag — see "READING THE STOCK TAG" below. null only if no tag/code is visible.
   "weight": number | null,         // net weight in grams read from the paper tag — see "READING THE STOCK TAG" below. null if no weight is written.
   "description": string,           // one rich natural sentence describing the piece for search
-  "category": string,              // ONE of: earrings, necklace, nath, tikka, ring, bracelet, bangle, pendant, set, kaan, chain, haar, choker
+  "category": string,              // ONE of: earrings, necklace, nath, tikka, ring, bracelet, bangle, pendant, set, kaan, chain, haar, choker, kamarband, hasli, hath phool, vanki
   "metal": string | null,          // ONE of: gold, silver, rose-gold, oxidized, two-tone
   "stone_color": string[],         // visible stone/enamel colors: red, blue, green, white, yellow, pink, purple, pearl, multicolor, emerald, ruby, sapphire
   "colors": string[],              // dominant overall colors of the piece (metal + stones combined)
@@ -72,7 +78,10 @@ Return a SINGLE JSON object (no markdown, no commentary) with exactly these keys
 }
 
 Critical rules:
-- A nath (nose ring) is NEVER earrings. A tikka (forehead piece) is NEVER a necklace.
+- A nath (nose ring) is NEVER earrings. A tikka/pika/matha patti (head/forehead ornament) is NEVER a necklace or earrings.
+- A kamarband/belt (waist ornament) is NEVER a bangle or bracelet.
+- A hasli (rigid torque necklace) → category "hasli". A hath phool / hathpool (hand ornament connecting ring to bracelet) → category "hath phool". A vanki (upper arm armlet) → category "vanki".
+- Gutta pussal, jhumki, tops, chand bali → all earrings. Mango mala, kashu mala, jalebi necklace, hasli, mini necklace → all necklace or hasli. Matha patti → tikka.
 - NEVER report the white/cream photo background as a color. "white" means white stones/enamel ON the jewelry.
 - Only fill attributes you can clearly see; use null or [] when uncertain.
 - "moti" = "pearl". Use lowercase everywhere.

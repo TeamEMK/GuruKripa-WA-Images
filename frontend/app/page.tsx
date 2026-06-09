@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const API = "/api/backend";
 
@@ -55,7 +55,6 @@ function useAutoRefresh<T>(url: string, intervalMs = 5000) {
   }, [url]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state set after await
     fetch_();
     const id = setInterval(fetch_, intervalMs);
     return () => clearInterval(id);
@@ -72,40 +71,58 @@ type Banner = { kind: "ok" | "err" | "info"; text: string } | null;
 export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
 
-  const status = useAutoRefresh<CacheStatus>(`${API}/admin/status`, 4000);
+  const status = useAutoRefresh<CacheStatus>(`${API}/admin/status`, 3000);
   const matchesData = useAutoRefresh<{ matches: MatchEntry[] }>(`${API}/admin/matches?limit=50`, 5000);
   const catalogData = useAutoRefresh<{ items: CatalogItem[] }>(`${API}/admin/catalog`, 10000);
 
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<Banner>(null);
+  const [indexLog, setIndexLog] = useState<string[]>([]);
+
+  const isRunning = !!status.data?.index_running;
+
+  // Poll live index log while indexing is in progress
+  useEffect(() => {
+    if (!isRunning) return;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API}/admin/index/log`);
+        if (res.ok) {
+          const data = await res.json();
+          setIndexLog(data.log ?? []);
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => clearInterval(id);
+  }, [isRunning]);
 
   const conn: "online" | "connecting" | "offline" =
     status.error ? "offline" : status.data ? "online" : "connecting";
 
   async function runIndex(path: string, label: string) {
     setBusy(true);
+    setIndexLog([]);
     setBanner({ kind: "info", text: `${label}…` });
     try {
-      // /api/admin/* is a server route that attaches the admin key from the
-      // server env (ADMIN_API_KEY) — the browser never handles the key.
       const res = await fetch(`/api/admin/${path}`, {
         method: "POST",
         signal: AbortSignal.timeout(30000),
       });
       if (res.status === 401) {
-        setBanner({ kind: "err", text: "Unauthorized — the server's ADMIN_API_KEY doesn't match the backend." });
+        setBanner({ kind: "err", text: "Unauthorized — check ADMIN_API_KEY." });
         return;
       }
       const body = await res.json();
       if (body.status === "started")
-        setBanner({ kind: "ok", text: `${label} started — OpenAI Vision is profiling images. Watch the count below.` });
+        setBanner({ kind: "ok", text: `${label} started — watch the live log below.` });
       else if (body.status === "already_running")
         setBanner({ kind: "info", text: "Indexing is already running." });
       else if (body.status === "error")
         setBanner({ kind: "err", text: body.reason ?? "Backend error." });
       else setBanner({ kind: "info", text: String(body.status) });
       status.refresh();
-      setTimeout(() => catalogData.refresh(), 20000);
     } catch {
       setBanner({ kind: "err", text: "Couldn't reach the backend." });
     } finally {
@@ -166,13 +183,13 @@ export default function App() {
             conn={conn}
             busy={busy}
             banner={banner}
+            indexLog={indexLog}
             onIndexAll={() => runIndex("refresh", "Full index")}
-            onIndexTest={() => runIndex("reindex?limit=30", "Test batch (30)")}
             onReTag={() => runIndex("reindex?force=true&limit=10000", "Re-tagging all")}
           />
         )}
-        {tab === "catalog" && <CatalogTab items={catalogData.data?.items ?? []} />}
-        {tab === "history" && <HistoryTab matches={matchesData.data?.matches ?? []} />}
+        {tab === "catalog" && <CatalogTab items={catalogData.data?.items ?? []} onRefresh={catalogData.refresh} />}
+        {tab === "history" && <HistoryTab matches={matchesData.data?.matches ?? []} loading={matchesData.loading} />}
       </main>
     </div>
   );
@@ -200,14 +217,14 @@ function ConnPill({ conn }: { conn: "online" | "connecting" | "offline" }) {
 // ── Dashboard Tab ──────────────────────────────────────────────────────────
 
 function DashboardTab({
-  status, conn, busy, banner, onIndexAll, onIndexTest, onReTag,
+  status, conn, busy, banner, indexLog, onIndexAll, onReTag,
 }: {
   status: CacheStatus | null;
   conn: string;
   busy: boolean;
   banner: Banner;
+  indexLog: string[];
   onIndexAll: () => void;
-  onIndexTest: () => void;
   onReTag: () => void;
 }) {
   const total = status?.total_images ?? 0;
@@ -215,18 +232,15 @@ function DashboardTab({
   const pending = Math.max(0, total - profiled);
   const running = !!status?.index_running;
   const pct = total > 0 ? Math.round((profiled / total) * 100) : 0;
+  const logRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll log to bottom as new lines arrive
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [indexLog]);
 
   return (
     <div className="space-y-6">
-      {running && (
-        <div className="flex items-center gap-3 rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-4 py-3">
-          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-indigo-400" />
-          <p className="text-sm text-indigo-200">
-            Indexing in progress — <b>{total}</b> images scanned so far. This runs in the background; leave the tab open or check back later.
-          </p>
-        </div>
-      )}
-
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
@@ -258,7 +272,7 @@ function DashboardTab({
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-400 transition-all"
+              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-400 transition-all duration-500"
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -276,13 +290,6 @@ function DashboardTab({
             className="rounded-lg bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {running ? "Indexing…" : busy ? "Starting…" : "⚡ Index all from Drive"}
-          </button>
-          <button
-            onClick={onIndexTest}
-            disabled={busy || running}
-            className="rounded-lg border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Test batch (30)
           </button>
           <button
             onClick={onReTag}
@@ -303,12 +310,32 @@ function DashboardTab({
           </div>
         )}
 
-        <p className="text-[11px] text-slate-600">
-          Scans Drive (incl. subfolders) and builds an OpenAI Vision profile + embedding for each image.
-          “Test batch” profiles only 30 so you can eyeball quality in the Catalog tab first.
-          “Re-tag all” re-profiles every image from scratch — use it after a tagging change (e.g. to pick up
-          long-vs-large fixes). New Drive images are also picked up automatically every ~10 min.
-        </p>
+        {/* Live log panel — visible during indexing or when log has content */}
+        {(running || indexLog.length > 0) && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">Live log</span>
+              {running && <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-400" />}
+            </div>
+            <div
+              ref={logRef}
+              className="h-56 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/80 p-3 font-mono text-[11px] leading-5 text-slate-300 space-y-0.5"
+            >
+              {indexLog.length === 0 ? (
+                <p className="text-slate-600">Waiting for output…</p>
+              ) : (
+                indexLog.map((line, i) => (
+                  <p key={i} className={
+                    line.startsWith("✅") ? "text-emerald-400"
+                    : line.startsWith("⚠") ? "text-amber-400"
+                    : line.startsWith("Found") || line.startsWith("Scanning") ? "text-sky-400"
+                    : "text-slate-300"
+                  }>{line}</p>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -316,7 +343,7 @@ function DashboardTab({
 
 // ── Catalog Tab ────────────────────────────────────────────────────────────
 
-function CatalogTab({ items }: { items: CatalogItem[] }) {
+function CatalogTab({ items, onRefresh }: { items: CatalogItem[]; onRefresh: () => void }) {
   const [search, setSearch] = useState("");
 
   const filtered = items.filter((item) => {
@@ -349,6 +376,12 @@ function CatalogTab({ items }: { items: CatalogItem[] }) {
           )}
         </div>
         <span className="text-sm text-slate-500">{filtered.length} of {items.length}</span>
+        <button
+          onClick={onRefresh}
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-400 hover:bg-white/10 transition"
+        >
+          ↻ Refresh
+        </button>
       </div>
 
       {folders.length > 0 && (
@@ -362,7 +395,7 @@ function CatalogTab({ items }: { items: CatalogItem[] }) {
 
       {filtered.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 py-20 text-center text-slate-600">
-          {items.length === 0 ? "No images indexed yet — run “Index all from Drive”." : "No matches for your search."}
+          {items.length === 0 ? "No images indexed yet — run Index all from Drive." : "No matches for your search."}
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -433,7 +466,16 @@ function tagColor(tag: string): string {
 
 // ── History Tab ────────────────────────────────────────────────────────────
 
-function HistoryTab({ matches }: { matches: MatchEntry[] }) {
+function HistoryTab({ matches, loading }: { matches: MatchEntry[]; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-slate-600 text-sm gap-2">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-slate-600" />
+        Loading history…
+      </div>
+    );
+  }
+
   if (matches.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-white/10 py-20 text-center text-slate-600">
@@ -441,30 +483,65 @@ function HistoryTab({ matches }: { matches: MatchEntry[] }) {
       </div>
     );
   }
+
   return (
     <div className="space-y-3">
-      {matches.map((entry, i) => (
-        <div key={i} className="rounded-xl border border-white/10 bg-slate-900/60 p-4">
-          <div className="mb-3 flex items-start justify-between">
-            <div>
-              <p className="font-mono text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</p>
-              <p className="mt-0.5 max-w-xs truncate text-xs text-slate-600">{entry.sender}</p>
-            </div>
-            {entry.query_url && (
-              <a href={entry.query_url} target="_blank" rel="noopener noreferrer"
-                className="max-w-[120px] truncate text-xs text-indigo-400 hover:text-indigo-300">Query image ↗</a>
-            )}
+      {matches.map((entry, i) => <HistoryCard key={i} entry={entry} />)}
+    </div>
+  );
+}
+
+function HistoryCard({ entry }: { entry: MatchEntry }) {
+  const [imgError, setImgError] = useState(false);
+  const time = new Date(entry.timestamp);
+  const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dateStr = time.toLocaleDateString([], { day: "numeric", month: "short" });
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-slate-900/60 p-4 flex gap-4">
+      {/* Query image thumbnail */}
+      <div className="flex-shrink-0">
+        {entry.query_url && !imgError ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={entry.query_url}
+            alt="query"
+            onError={() => setImgError(true)}
+            className="h-16 w-16 rounded-lg object-cover border border-white/10"
+          />
+        ) : (
+          <div className="h-16 w-16 rounded-lg bg-slate-800 border border-white/10 grid place-items-center text-slate-600 text-xs">
+            {entry.query_url ? "📷" : "💬"}
           </div>
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs text-slate-500 truncate">{entry.sender}</p>
+          <p className="text-xs text-slate-600 whitespace-nowrap">{dateStr} · {timeStr}</p>
+        </div>
+
+        {entry.matches.length === 0 ? (
+          <p className="text-xs text-slate-600 italic">No matches returned</p>
+        ) : (
           <div className="flex flex-wrap gap-2">
             {entry.matches.map((m, j) => (
-              <div key={j} className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1 text-xs">
-                <span className="max-w-[100px] truncate text-slate-300">{m.name.replace(/\.[^.]+$/, "")}</span>
-                <span className={`font-semibold ${m.score >= 80 ? "text-emerald-400" : m.score >= 60 ? "text-amber-400" : "text-slate-400"}`}>{m.score}%</span>
+              <div key={j} className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs border ${
+                j === 0 ? "border-indigo-400/30 bg-indigo-500/10" : "border-white/10 bg-white/5"
+              }`}>
+                <span className="font-semibold text-white">{m.name.replace(/\.[^.]+$/, "")}</span>
+                {m.score > 0 && (
+                  <span className={`font-medium ${m.score >= 70 ? "text-emerald-400" : m.score >= 50 ? "text-amber-400" : "text-slate-500"}`}>
+                    {m.score}%
+                  </span>
+                )}
               </div>
             ))}
           </div>
-        </div>
-      ))}
+        )}
+      </div>
     </div>
   );
 }

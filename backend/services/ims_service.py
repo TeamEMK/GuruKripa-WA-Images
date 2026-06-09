@@ -94,11 +94,43 @@ class IMSService:
         {"polki"},
     ]
 
-    # All known jewelry types — the profile's category overrides folder name
+    # All known jewelry type words (folder names + customer query words).
+    # If the query contains ANY of these, type-filtering mode is activated.
     _JEWELRY_TYPES = {
-        "earrings", "necklace", "nath", "tikka", "maang-tikka", "ring",
-        "bracelet", "bangle", "pendant", "set", "kaan", "chain", "haar",
-        "choker", "jhumka", "stud", "hoop", "chandbali",
+        "earrings", "earring", "necklace", "nath", "tikka", "tika", "maang-tikka",
+        "pika", "ring", "bracelet", "bangle", "pendant", "set", "kaan", "chain",
+        "haar", "choker", "chokar", "jhumka", "jhumki", "stud", "hoop",
+        "chandbali", "bali", "kamarband", "belt", "tops",
+        "hasli", "hath phool", "hathpool", "vanki",
+        "gutta pussal", "kashu mala", "mango mala", "matha patti",
+        "jalebi necklace", "jalebi", "magari pendant", "magari",
+        "chand bali", "mini necklace",
+    }
+
+    # Maps query type words → accepted profile categories (for type exclusion).
+    # Items are also matched by folder name, so this only needs to cover profile categories.
+    _TYPE_CATEGORIES: dict[str, set] = {
+        "earrings": {"earrings"}, "earring": {"earrings"},
+        "bali": {"earrings"}, "chand bali": {"earrings"}, "chandbali": {"earrings"},
+        "jhumka": {"earrings"}, "jhumki": {"earrings"},
+        "tops": {"earrings"}, "stud": {"earrings"}, "hoop": {"earrings"},
+        "gutta pussal": {"earrings"}, "kaan": {"earrings", "kaan"},
+        "nath": {"nath"},
+        "tikka": {"tikka"}, "tika": {"tikka"}, "pika": {"tikka"},
+        "maang-tikka": {"tikka"}, "matha patti": {"tikka"},
+        "necklace": {"necklace", "haar", "choker", "hasli"},
+        "haar": {"necklace", "haar"}, "choker": {"necklace", "choker"},
+        "chokar": {"necklace", "choker"},
+        "hasli": {"hasli", "necklace"},
+        "kashu mala": {"necklace"}, "mango mala": {"necklace", "haar"},
+        "jalebi necklace": {"necklace"}, "jalebi": {"necklace"},
+        "mini necklace": {"necklace"},
+        "pendant": {"pendant"}, "magari pendant": {"pendant"}, "magari": {"pendant"},
+        "bangle": {"bangle"}, "bracelet": {"bracelet"},
+        "belt": {"kamarband"}, "kamarband": {"kamarband"},
+        "hath phool": {"hath phool"}, "hathpool": {"hath phool"},
+        "vanki": {"vanki"},
+        "ring": {"ring"}, "chain": {"chain"}, "set": {"set"},
     }
 
     def find_by_color(self, color: str, limit: int = 5) -> list[dict]:
@@ -123,11 +155,20 @@ class IMSService:
             folder_tags = [f.lower() for f in item.get("folder_path", [])]
             all_tags = list(dict.fromkeys(color_tags + folder_tags))
 
-            # Type exclusion: if query asks for a type and the profile says a
-            # DIFFERENT category, skip (e.g. query=necklace but item is a nath).
+            # Type exclusion: if query asks for a type and the item is a different
+            # category, skip. Uses _TYPE_CATEGORIES to map aliases (e.g. "belt" →
+            # kamarband). Falls back to folder name match so items in a "BELT"
+            # folder pass even before their profile is indexed.
             if query_types:
                 item_type = (item.get("profile", {}).get("category") or "").lower()
-                if item_type and item_type not in query_types:
+                accepted: set = set()
+                for qt in query_types:
+                    accepted |= self._TYPE_CATEGORIES.get(qt, {qt})
+                folder_lower = {f.lower() for f in item.get("folder_path", [])}
+                folder_match = bool(query_types & folder_lower) or any(
+                    qt in fn or fn in qt for qt in query_types for fn in folder_lower
+                )
+                if item_type and item_type not in accepted and not folder_match:
                     continue
 
             if query_material_group:
