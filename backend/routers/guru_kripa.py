@@ -252,7 +252,10 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
     if ctx:
         combined = f"{ctx['embed_text']} {raw_query}".strip()
         logger.info(f"Follow-up query — blending image context with: '{raw_query}'")
-        results = await _semantic_search(combined, raw_query)
+        # filter_query = original user text so category/length filters are NOT
+        # confused by type words in the image embed text (e.g. "necklace" in the
+        # profile would otherwise cancel out the "jhumki" earrings filter).
+        results = await _semantic_search(combined, raw_query, filter_query=raw_query)
     else:
         results = await _semantic_search(raw_query, query_value or raw_query)
     if not results:
@@ -267,18 +270,27 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
     await _send_matches(sender, results, msg_id, show_score=False)
 
 
-async def _semantic_search(raw_query: str, keyword_fallback: str) -> list[tuple[dict, float | None]]:
+async def _semantic_search(
+    raw_query: str,
+    keyword_fallback: str,
+    filter_query: str | None = None,
+) -> list[tuple[dict, float | None]]:
     """Embedding search first, then keyword fallback. Returns (item, score) pairs.
-    An explicit length in the query ('long'/'short') is enforced as a hard filter."""
+
+    raw_query    — text that is embedded (may include image context for follow-ups).
+    filter_query — text used for category/length/weight enforcement; defaults to
+                   raw_query. Pass the original user text when raw_query is a
+                   combined image+text string so category filters stay correct."""
+    fq = filter_query if filter_query is not None else raw_query
     query_vec = await state.openai_svc.embed_text(raw_query)
     results = state.cache.find_semantic(query_vec, k=MAX_MATCHES + 7, min_score=settings.min_match_score)
-    results = _enforce_category(raw_query, _enforce_weight(raw_query, _enforce_length(raw_query, results)))
+    results = _enforce_category(fq, _enforce_weight(fq, _enforce_length(fq, results)))
     if results:
         logger.info(f"Semantic search for '{raw_query}' returned {len(results)} results")
         return results[:MAX_MATCHES]
     logger.info(f"Falling back to keyword search for '{keyword_fallback}'")
     fallback = [(m, None) for m in state.ims.find_by_color(keyword_fallback, limit=MAX_MATCHES + 7)]
-    return _enforce_category(raw_query, _enforce_weight(raw_query, _enforce_length(raw_query, fallback)))[:MAX_MATCHES]
+    return _enforce_category(fq, _enforce_weight(fq, _enforce_length(fq, fallback)))[:MAX_MATCHES]
 
 
 async def _send_exact(sender: str, stock: str, msg_id: str | None) -> dict | None:
