@@ -177,19 +177,28 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         logger.error("OpenAI service not initialised")
         return
 
-    # ── IMAGE query (optionally with text) ───────────────────────────────────
+    # ── IMAGE query (optionally with a caption) ──────────────────────────────
+    #
+    # Three modes:
+    #  • Image + caption text → understand the image's STYLE, then return items
+    #    of the TYPE requested in the caption (category/weight/length filters
+    #    are derived from the text; the embedding is from the image alone).
+    #  • Image only            → find up to 5 items that match the image's style.
+    #  • Text only (below)     → semantic/keyword search on the text.
     if image_bytes:
+        mode = "image+caption" if text else "image-only"
+        logger.info(f"Mode: {mode} | sender={sender}")
         profile = await state.openai_svc.analyze_image_profile(image_bytes, msg_type)
 
-        # Embed the query once — reused for the exact-match "similar" follow-ups
-        # and for the best-matches path.
+        # Embed the PURE image profile (style only) for cosine similarity search.
+        # The caption text, if any, is applied afterwards as an explicit type filter
+        # so we find items that MATCH THE STYLE of the photo and are of the right TYPE.
         query_vec: list[float] | None = None
         if profile:
             pure_embed = profile_to_embed_text(profile)
-            embed_text = f"{pure_embed} {text}".strip() if text else pure_embed
-            query_vec = await state.openai_svc.embed_text(embed_text)
-            # Save pure image context so a follow-up text ("matching jhumki tops")
-            # can blend this image's style with the requested type.
+            query_vec = await state.openai_svc.embed_text(pure_embed)
+            # Store context so a follow-up text message can blend this image's
+            # style with a new type request ("matching jhumki tops").
             if query_vec:
                 _set_sender_context(sender, pure_embed, query_vec)
 
