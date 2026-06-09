@@ -200,9 +200,14 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
             exact = await _send_exact(sender, stock, msg_id)
             if exact is not None and query_vec:
                 similar = state.cache.find_semantic(
-                    query_vec, k=MAX_SIMILAR_AFTER_EXACT + 6, min_score=settings.min_match_score
+                    query_vec, k=MAX_SIMILAR_AFTER_EXACT + 14, min_score=settings.min_match_score
                 )
-                similar = _relevant([(it, sc) for it, sc in similar if it["id"] != exact["id"]])
+                similar = [(it, sc) for it, sc in similar if it["id"] != exact["id"]]
+                # If the caption names a different category ("I want matching bangles"),
+                # filter similar suggestions to that type rather than the image's type.
+                if text:
+                    similar = _enforce_category(text, _enforce_weight(text, _enforce_length(text, similar)))
+                similar = _relevant(similar)
                 if similar:
                     await _send_matches(
                         sender, similar, None,
