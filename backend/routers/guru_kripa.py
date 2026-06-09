@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import deque
 
 import httpx
@@ -30,6 +31,26 @@ _processing_task: asyncio.Task | None = None  # currently running _process task
 
 # Delay between sending each WhatsApp message (seconds)
 SEND_DELAY = 5.0
+
+# ── Per-sender image context — enables follow-up text queries ─────────────────
+# When a customer sends an image, we store the profile + embed text for 30 min.
+# A subsequent text like "Need matching jhumki tops" blends the image's style
+# with the requested type to find complementary pieces.
+_CONTEXT_TTL = 1800  # 30 minutes
+_sender_context: dict[str, dict] = {}
+
+
+def _set_sender_context(sender: str, embed_text: str, vec: list[float]) -> None:
+    _sender_context[sender] = {"embed_text": embed_text, "vec": vec, "ts": time.time()}
+
+
+def _get_sender_context(sender: str) -> dict | None:
+    ctx = _sender_context.get(sender)
+    if ctx and time.time() - ctx["ts"] < _CONTEXT_TTL:
+        return ctx
+    if ctx:
+        del _sender_context[sender]
+    return None
 
 # Cosine score at/above which the top semantic result is called a "strong match".
 STRONG_MATCH = 0.55
@@ -164,10 +185,13 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         # and for the best-matches path.
         query_vec: list[float] | None = None
         if profile:
-            embed_text = profile_to_embed_text(profile)
-            if text:
-                embed_text = f"{embed_text} {text}".strip()  # "same item in black" etc.
+            pure_embed = profile_to_embed_text(profile)
+            embed_text = f"{pure_embed} {text}".strip() if text else pure_embed
             query_vec = await state.openai_svc.embed_text(embed_text)
+            # Save pure image context so a follow-up text ("matching jhumki tops")
+            # can blend this image's style with the requested type.
+            if query_vec:
+                _set_sender_context(sender, pure_embed, query_vec)
 
         # 1. Stock code on the label AND in inventory → send the exact piece first,
         #    then follow it with up to 4 genuinely-similar pieces.
@@ -220,9 +244,17 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         await _send_exact(sender, query_value, msg_id)
         return
 
-    # color / describe → semantic search on the unified vector space
+    # color / describe → semantic search on the unified vector space.
+    # If the customer sent an image recently, blend its style with the text
+    # request so "matching jhumki tops" finds earrings that complement the image.
     raw_query = text or query_value or ""
-    results = await _semantic_search(raw_query, query_value or raw_query)
+    ctx = _get_sender_context(sender)
+    if ctx:
+        combined = f"{ctx['embed_text']} {raw_query}".strip()
+        logger.info(f"Follow-up query — blending image context with: '{raw_query}'")
+        results = await _semantic_search(combined, raw_query)
+    else:
+        results = await _semantic_search(raw_query, query_value or raw_query)
     if not results:
         await _reply_text(sender, f"❌ No matching items found for *{query_value or raw_query}*.", msg_id)
         return
