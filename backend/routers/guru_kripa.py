@@ -214,8 +214,14 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         #    match (so only 2-3 are sent when only 2-3 are close).
         if query_vec:
             results = state.cache.find_semantic(
-                query_vec, k=MAX_MATCHES + 7, min_score=settings.min_match_score
+                query_vec, k=MAX_MATCHES + 14, min_score=settings.min_match_score
             )
+            # When the caption names a jewelry type that differs from the image
+            # (e.g. "show matching jhumki tops" sent with a necklace photo),
+            # honour the requested type before the relevance trim so we don't
+            # keep only the wrong category.
+            if text:
+                results = _enforce_category(text, _enforce_weight(text, _enforce_length(text, results)))
             results = _relevant(results)
             if results:
                 state.cache.log_match(
