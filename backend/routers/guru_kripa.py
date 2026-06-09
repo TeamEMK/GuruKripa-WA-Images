@@ -376,16 +376,21 @@ _TYPE_ALIASES: dict[str, set[str]] = {
     "mango": {"necklace", "haar"},
     # pendant
     "pendant": {"pendant"}, "magari": {"pendant"},
-    # bangle / bracelet
-    "bangle": {"bangle"}, "bracelet": {"bracelet"},
+    # bangle / bracelet — include plural forms ("I want matching bangles")
+    "bangle": {"bangle"}, "bangles": {"bangle"},
+    "bracelet": {"bracelet"}, "bracelets": {"bracelet"},
     # belt / kamarband
     "belt": {"kamarband"}, "kamarband": {"kamarband"},
     # hath phool (hand ornament)
     "hath": {"hath phool"}, "hathpool": {"hath phool"},
     # vanki (armlet)
     "vanki": {"vanki"},
-    # others
-    "ring": {"ring"}, "chain": {"chain"}, "set": {"set"},
+    # others — plurals included
+    "ring": {"ring"}, "rings": {"ring"},
+    "chain": {"chain"}, "chains": {"chain"},
+    "necklaces": {"necklace", "haar", "choker", "hasli"},
+    "pendants": {"pendant"},
+    "sets": {"set"}, "set": {"set"},
 }
 
 

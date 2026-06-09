@@ -97,8 +97,9 @@ class IMSService:
     # All known jewelry type words (folder names + customer query words).
     # If the query contains ANY of these, type-filtering mode is activated.
     _JEWELRY_TYPES = {
-        "earrings", "earring", "necklace", "nath", "tikka", "tika", "maang-tikka",
-        "pika", "ring", "bracelet", "bangle", "pendant", "set", "kaan", "chain",
+        "earrings", "earring", "necklace", "necklaces", "nath", "tikka", "tika", "maang-tikka",
+        "pika", "ring", "rings", "bracelet", "bracelets", "bangle", "bangles",
+        "pendant", "pendants", "set", "sets", "kaan", "chain", "chains",
         "haar", "choker", "chokar", "jhumka", "jhumki", "stud", "hoop",
         "chandbali", "bali", "kamarband", "belt", "tops",
         "hasli", "hath phool", "hathpool", "vanki",
@@ -119,18 +120,23 @@ class IMSService:
         "tikka": {"tikka"}, "tika": {"tikka"}, "pika": {"tikka"},
         "maang-tikka": {"tikka"}, "matha patti": {"tikka"},
         "necklace": {"necklace", "haar", "choker", "hasli"},
+        "necklaces": {"necklace", "haar", "choker", "hasli"},
         "haar": {"necklace", "haar"}, "choker": {"necklace", "choker"},
         "chokar": {"necklace", "choker"},
         "hasli": {"hasli", "necklace"},
         "kashu mala": {"necklace"}, "mango mala": {"necklace", "haar"},
         "jalebi necklace": {"necklace"}, "jalebi": {"necklace"},
         "mini necklace": {"necklace"},
-        "pendant": {"pendant"}, "magari pendant": {"pendant"}, "magari": {"pendant"},
-        "bangle": {"bangle"}, "bracelet": {"bracelet"},
+        "pendant": {"pendant"}, "pendants": {"pendant"},
+        "magari pendant": {"pendant"}, "magari": {"pendant"},
+        "bangle": {"bangle"}, "bangles": {"bangle"},
+        "bracelet": {"bracelet"}, "bracelets": {"bracelet"},
         "belt": {"kamarband"}, "kamarband": {"kamarband"},
         "hath phool": {"hath phool"}, "hathpool": {"hath phool"},
         "vanki": {"vanki"},
-        "ring": {"ring"}, "chain": {"chain"}, "set": {"set"},
+        "ring": {"ring"}, "rings": {"ring"},
+        "chain": {"chain"}, "chains": {"chain"},
+        "set": {"set"}, "sets": {"set"},
     }
 
     def find_by_color(self, color: str, limit: int = 5) -> list[dict]:
