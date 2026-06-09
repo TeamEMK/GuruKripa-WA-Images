@@ -365,6 +365,7 @@ _TYPE_ALIASES: dict[str, set[str]] = {
     # tikka / forehead
     "tikka": {"tikka"}, "tika": {"tikka"}, "pika": {"tikka"},
     "maang-tikka": {"tikka"}, "matha": {"tikka"}, "patti": {"tikka"},
+    "maathapatti": {"tikka"}, "mathaapatti": {"tikka"},
     # necklace family
     "necklace": {"necklace", "haar", "choker", "hasli"},
     "haar": {"necklace", "haar"},

@@ -37,7 +37,7 @@ Rules:
   "pika" / "tika" = tikka | "belt" = kamarband | "bali" / "chand bali" / "chandbali" = earrings (chandbali subtype)
   "chokar" = choker (necklace) | "jhumki" / "jhumka" = earrings (jhumka subtype) | "tops" = earrings (stud subtype)
   "gutta pussal" = earrings | "hasli" = necklace (rigid torque) | "hath phool" / "hathpool" = hath phool (hand ornament)
-  "vanki" = vanki (armlet) | "matha patti" = tikka | "kashu mala" / "kashu" = necklace
+  "vanki" = vanki (armlet) | "matha patti" / "maathapatti" / "mathaapatti" = tikka | "kashu mala" / "kashu" = necklace
   "mango mala" = necklace (haar) | "jalebi necklace" / "jalebi" = necklace | "magari pendant" / "magari" = pendant
 - Subtypes: jhumka, stud, hoop, chandbali, drop, choker, haar, layered, long, short
 - Sizes: small, medium, large, mini, heavy, statement
@@ -65,7 +65,7 @@ Return a SINGLE JSON object (no markdown, no commentary) with exactly these keys
   "metal": string | null,          // ONE of: gold, silver, rose-gold, oxidized, two-tone
   "stone_color": string[],         // visible stone/enamel colors: red, blue, green, white, yellow, pink, purple, pearl, multicolor, emerald, ruby, sapphire
   "colors": string[],              // dominant overall colors of the piece (metal + stones combined)
-  "subtype": string | null,        // jhumka, stud, hoop, chandbali, drop, choker, haar, layered, statement, cluster
+  "subtype": string | null,        // jhumka, stud, hoop, chandbali, drop, choker, haar, layered, statement, cluster, matha patti
   "silhouette": string | null,     // the overall OUTLINE you would sketch: e.g. "row of tapering spikes", "round central medallion", "broad collar / bib", "single drop pendant", "V-shaped drop", "linear bar", "choker band", "teardrop cluster"
   "structure": string | null,      // how it is BUILT / arranged: e.g. "graduated spike danglers radiating from the centre", "central round pendant with hanging pearl tassels", "repeating identical articulated links", "multi-layer strands"
   "motif": string[],               // the repeating decorative SHAPES, every one you see: e.g. ["spike","kalgi","spear"], ["floral","medallion"], ["paisley"], ["peacock"], ["round"], ["square","kundan"], ["leaf"]
@@ -82,6 +82,19 @@ Critical rules:
 - A kamarband/belt (waist ornament) is NEVER a bangle or bracelet.
 - A hasli (rigid torque necklace) → category "hasli". A hath phool / hathpool (hand ornament connecting ring to bracelet) → category "hath phool". A vanki (upper arm armlet) → category "vanki".
 - Gutta pussal, jhumki, tops, chand bali → all earrings. Mango mala, kashu mala, jalebi necklace, hasli, mini necklace → all necklace or hasli. Matha patti → tikka.
+
+MATHA PATTI vs CHOKER — this is the single most common misclassification:
+- A MATHA PATTI (maang tikka / head ornament) has TWO parts: (1) a horizontal band of
+  pearl strings, beads, or chains that sits across the FOREHEAD/HAIRLINE, and (2) a
+  LONG VERTICAL TASSEL or chain that hangs DOWN from the CENTER of the band — this
+  hanging piece is what the "patti" in the name refers to. When photographed on a
+  display bust/mannequin, the horizontal band rests around the neck area, but the LONG
+  DROP in the centre always identifies it as a matha patti. Category: "tikka".
+- A CHOKER is worn around the NECK only. It does NOT have a long vertical pendant
+  hanging from its centre — at most it has a small pendant pendant (shorter than
+  the band width itself). No long drop = potential choker. Long central drop = matha patti.
+- If you see a horizontal pearl/bead band AND a long dangling piece (even 3-4 cm) from
+  its centre → category "tikka", subtype "matha patti".
 - NEVER report the white/cream photo background as a color. "white" means white stones/enamel ON the jewelry.
 - Only fill attributes you can clearly see; use null or [] when uncertain.
 - "moti" = "pearl". Use lowercase everywhere.
