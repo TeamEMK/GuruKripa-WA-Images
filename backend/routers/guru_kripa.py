@@ -190,15 +190,22 @@ async def _process(image_url: str | None, text: str | None, msg_type: str, sende
         logger.info(f"Mode: {mode} | sender={sender}")
         profile = await state.openai_svc.analyze_image_profile(image_bytes, msg_type)
 
-        # Embed the PURE image profile (style only) for cosine similarity search.
-        # The caption text, if any, is applied afterwards as an explicit type filter
-        # so we find items that MATCH THE STYLE of the photo and are of the right TYPE.
+        # Build the search embedding.
+        # • Caption present → strip the image's own category and combine the
+        #   universal style attributes (metal, colors, motifs, tags) with the
+        #   user's text.  This makes the vector point toward "style-similar items
+        #   OF THE REQUESTED TYPE" rather than items similar to the image's type.
+        #   E.g.: jhumki photo + "matching necklace" → searches for temple-gold
+        #   necklaces, NOT earrings filtered down to zero results.
+        # • No caption → use the full profile embedding (category-biased so we
+        #   find more of the same type).
         query_vec: list[float] | None = None
         if profile:
             pure_embed = profile_to_embed_text(profile)
-            query_vec = await state.openai_svc.embed_text(pure_embed)
-            # Store context so a follow-up text message can blend this image's
-            # style with a new type request ("matching jhumki tops").
+            search_text = _cross_category_embed(profile, text) if text else pure_embed
+            query_vec = await state.openai_svc.embed_text(search_text)
+            # Store pure image context so a follow-up text message can blend this
+            # image's style with a new type request ("matching jhumki tops").
             if query_vec:
                 _set_sender_context(sender, pure_embed, query_vec)
 
@@ -379,6 +386,37 @@ _TYPE_ALIASES: dict[str, set[str]] = {
     # others
     "ring": {"ring"}, "chain": {"chain"}, "set": {"set"},
 }
+
+
+def _cross_category_embed(profile: dict, text: str) -> str:
+    """Build a search embedding for cross-type matching (e.g. jhumki photo +
+    'matching necklace' caption).
+
+    Uses only UNIVERSAL style attributes from the image — colors, metal, motifs,
+    style tags — WITHOUT the image's own category/structure, which would bias
+    the embedding toward the wrong type. Appends the user's text so the vector
+    points toward 'style-similar items of the requested type'.
+
+    Example: antique gold jhumki with emerald → 'antique gold emerald peacock
+    temple nakshi I want matching necklace' → finds temple-style necklaces."""
+    parts: list[str] = []
+    for key in ("metal", "style"):
+        val = profile.get(key)
+        if val:
+            parts.append(str(val))
+    for key in ("colors", "stone_color", "keywords"):
+        for v in (profile.get(key) or []):
+            if v:
+                parts.append(str(v))
+    for v in (profile.get("motif") or []):
+        if v:
+            parts.append(str(v))
+    for v in (profile.get("tags") or []):
+        if v:
+            parts.append(str(v))
+    if text:
+        parts.append(text)
+    return " ".join(parts).strip()
 
 
 def _enforce_category(query: str, results: list[tuple[dict, float | None]]) -> list[tuple[dict, float | None]]:
